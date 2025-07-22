@@ -1,0 +1,336 @@
+{# AI Transcription Section - Separate from Reason for Visit #}
+<div class="col-12 mt-4">
+    <fieldset class="ai-transcription-section">
+        <legend class="text-primary">{{ "AI Voice Transcription"|xlt }}</legend>
+        <div class="card bg-light border-primary">
+            <div class="card-body text-center">
+                <div class="mb-3">
+                    <p class="card-text text-muted mb-3">{{ "Record your conversation with the patient and let AI create a clinical summary"|xlt }}</p>
+                    
+                    {# Large AI Transcription Button #}
+                    <button type="button" id="aiTranscriptionBtn" class="btn btn-primary btn-lg px-5 py-3 me-3">
+                        <i class="fas fa-microphone fa-lg" id="aiMicIcon"></i>
+                        <span id="aiBtnText" class="ms-2">{{ "AI Transcription"|xlt }}</span>
+                    </button>
+                    
+                    {# Status Display #}
+                    <div class="mt-3">
+                        <span id="aiStatus" class="badge badge-secondary">{{ "Ready to record"|xlt }}</span>
+                        <div id="recordingTimer" class="mt-2 d-none">
+                            <span class="text-muted">{{ "Recording time"|xlt }}: </span>
+                            <span id="timerDisplay" class="fw-bold text-danger">00:00</span>
+                        </div>
+                    </div>
+                </div>
+                
+                {# Transcription Display Area #}
+                <div id="transcriptionResult" class="mt-4 d-none">
+                    <div class="card border-success">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0">{{ "Voice Transcription"|xlt }}</h6>
+                        </div>
+                        <div class="card-body">
+                            <p id="transcriptionText" class="card-text text-start"></p>
+                            <div class="mt-3">
+                                <button type="button" id="saveToSummary" class="btn btn-success">
+                                    <i class="fas fa-save"></i> {{ "Save to AI Summary"|xlt }}
+                                </button>
+                                <button type="button" id="clearTranscription" class="btn btn-outline-danger ms-2">
+                                    <i class="fas fa-trash"></i> {{ "Clear"|xlt }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+</div>
+
+{# AI Transcription JavaScript #}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('AI Transcription system initializing...');
+    
+    // AI Transcription Variables
+    let aiMediaRecorder;
+    let aiAudioChunks = [];
+    let isAiRecording = false;
+    let recordingStartTime;
+    let timerInterval;
+    let currentTranscription = '';
+    
+    // AI Transcription Elements
+    const aiBtn = document.getElementById('aiTranscriptionBtn');
+    const aiStatus = document.getElementById('aiStatus');
+    const aiBtnText = document.getElementById('aiBtnText');
+    const aiMicIcon = document.getElementById('aiMicIcon');
+    const recordingTimer = document.getElementById('recordingTimer');
+    const timerDisplay = document.getElementById('timerDisplay');
+    const transcriptionResult = document.getElementById('transcriptionResult');
+    const transcriptionText = document.getElementById('transcriptionText');
+    const saveToSummary = document.getElementById('saveToSummary');
+    const clearTranscription = document.getElementById('clearTranscription');
+    
+    // Event Listeners
+    aiBtn.addEventListener('click', async function() {
+        console.log('AI Transcription button clicked, isRecording:', isAiRecording);
+        if (!isAiRecording) {
+            await startAiRecording();
+        } else {
+            stopAiRecording();
+        }
+    });
+    
+    saveToSummary.addEventListener('click', saveTranscriptionToSummary);
+    clearTranscription.addEventListener('click', clearTranscriptionData);
+    
+    async function startAiRecording() {
+        try {
+            console.log('Starting AI voice recording...');
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    sampleRate: 44100
+                } 
+            });
+            
+            // Determine best audio format
+            let mimeType = 'audio/wav';
+            const supportedTypes = [
+                'audio/wav',
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+                'audio/ogg;codecs=opus'
+            ];
+            
+            for (const type of supportedTypes) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    mimeType = type;
+                    break;
+                }
+            }
+            
+            console.log('Using AI transcription MIME type:', mimeType);
+            aiMediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+            aiAudioChunks = [];
+            
+            aiMediaRecorder.ondataavailable = function(event) {
+                console.log('AI audio data available:', event.data.size, 'bytes');
+                aiAudioChunks.push(event.data);
+            };
+            
+            aiMediaRecorder.onstop = async function() {
+                console.log('AI recording stopped, processing audio...');
+                const audioBlob = new Blob(aiAudioChunks, { type: mimeType });
+                console.log('AI audio blob created:', audioBlob.size, 'bytes, type:', audioBlob.type);
+                await transcribeAiAudio(audioBlob);
+                stream.getTracks().forEach(track => track.stop());
+            };
+            
+            // Start recording
+            aiMediaRecorder.start(1000);
+            isAiRecording = true;
+            recordingStartTime = Date.now();
+            
+            // Update UI for recording state
+            aiBtn.className = 'btn btn-danger btn-lg px-5 py-3 pulse';
+            aiBtnText.textContent = '{{ "Stop Recording"|xlt }}';
+            aiMicIcon.className = 'fas fa-stop fa-lg';
+            aiStatus.textContent = '{{ "Recording in progress..."|xlt }}';
+            aiStatus.className = 'badge badge-danger';
+            
+            // Show and start timer
+            recordingTimer.classList.remove('d-none');
+            startRecordingTimer();
+            
+        } catch (error) {
+            console.error('Error accessing microphone for AI transcription:', error);
+            aiStatus.textContent = '{{ "Error: Could not access microphone"|xlt }}';
+            aiStatus.className = 'badge badge-danger';
+        }
+    }
+    
+    function stopAiRecording() {
+        if (aiMediaRecorder && isAiRecording) {
+            console.log('Stopping AI recording...');
+            aiMediaRecorder.stop();
+            isAiRecording = false;
+            
+            // Stop timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            
+            // Update UI for processing state
+            aiBtn.className = 'btn btn-warning btn-lg px-5 py-3';
+            aiBtnText.textContent = '{{ "Processing..."|xlt }}';
+            aiMicIcon.className = 'fas fa-spinner fa-spin fa-lg';
+            aiStatus.textContent = '{{ "Transcribing with OpenAI Whisper..."|xlt }}';
+            aiStatus.className = 'badge badge-warning';
+            aiBtn.disabled = true;
+        }
+    }
+    
+    function startRecordingTimer() {
+        timerInterval = setInterval(function() {
+            if (recordingStartTime) {
+                const elapsed = Date.now() - recordingStartTime;
+                const minutes = Math.floor(elapsed / 60000);
+                const seconds = Math.floor((elapsed % 60000) / 1000);
+                timerDisplay.textContent = 
+                    (minutes < 10 ? '0' : '') + minutes + ':' + 
+                    (seconds < 10 ? '0' : '') + seconds;
+            }
+        }, 1000);
+    }
+    
+    async function transcribeAiAudio(audioBlob) {
+        const formData = new FormData();
+        
+        // Create filename with proper extension
+        let filename = 'ai-recording.wav';
+        if (audioBlob.type.includes('webm')) {
+            filename = 'ai-recording.webm';
+        } else if (audioBlob.type.includes('mp4')) {
+            filename = 'ai-recording.m4a';
+        } else if (audioBlob.type.includes('ogg')) {
+            filename = 'ai-recording.ogg';
+        }
+        
+        console.log('Uploading AI audio file:', filename, 'Size:', audioBlob.size, 'Type:', audioBlob.type);
+        
+        formData.append('audio', audioBlob, filename);
+        formData.append('csrf_token_form', document.querySelector('input[name="csrf_token_form"]').value);
+        formData.append('pid', '{{ pid|default("") }}');
+        formData.append('encounter', '{{ encounter.encounter|default("") }}');
+        
+        try {
+            const response = await fetch('{{ webroot }}/interface/forms/newpatient/ai_transcription.php', {
+                method: 'POST',
+                body: formData
+            });
+            
+            console.log('AI Transcription response status:', response.status);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('AI Transcription server error:', errorText);
+                throw new Error(`Server error (${response.status}): ${errorText.substring(0, 100)}`);
+            }
+            
+            const result = await response.json();
+            console.log('AI Transcription result:', result);
+            
+            if (result.success) {
+                currentTranscription = result.transcription;
+                displayTranscription(result.transcription);
+                aiStatus.textContent = '{{ "Transcription completed!"|xlt }}';
+                aiStatus.className = 'badge badge-success';
+            } else {
+                throw new Error(result.error || 'Unknown AI transcription error');
+            }
+            
+        } catch (error) {
+            console.error('AI Transcription error:', error);
+            aiStatus.textContent = '{{ "Transcription failed"|xlt }}';
+            aiStatus.className = 'badge badge-danger';
+        } finally {
+            // Reset button
+            aiBtn.disabled = false;
+            aiBtnText.textContent = '{{ "AI Transcription"|xlt }}';
+            aiMicIcon.className = 'fas fa-microphone fa-lg';
+            aiBtn.className = 'btn btn-primary btn-lg px-5 py-3';
+            recordingTimer.classList.add('d-none');
+        }
+    }
+    
+    function displayTranscription(text) {
+        transcriptionText.textContent = text;
+        transcriptionResult.classList.remove('d-none');
+    }
+    
+    async function saveTranscriptionToSummary() {
+        if (!currentTranscription) {
+            alert('{{ "No transcription to save"|xlt }}');
+            return;
+        }
+        
+        try {
+            console.log('Saving transcription to AI Summary...');
+            const formData = new FormData();
+            formData.append('transcription', currentTranscription);
+            formData.append('csrf_token_form', document.querySelector('input[name="csrf_token_form"]').value);
+            formData.append('pid', '{{ pid|default("") }}');
+            formData.append('encounter', '{{ encounter.encounter|default("") }}');
+            formData.append('action', 'save_ai_summary');
+            
+            const response = await fetch('{{ webroot }}/interface/forms/ai_summary/save.php', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                alert('{{ "AI Summary saved successfully!"|xlt }}');
+                clearTranscriptionData();
+            } else {
+                throw new Error(result.error || 'Failed to save AI Summary');
+            }
+            
+        } catch (error) {
+            console.error('Error saving to AI Summary:', error);
+            alert('{{ "Failed to save AI Summary"|xlt }}: ' + error.message);
+        }
+    }
+    
+    function clearTranscriptionData() {
+        currentTranscription = '';
+        transcriptionResult.classList.add('d-none');
+        transcriptionText.textContent = '';
+        aiStatus.textContent = '{{ "Ready to record"|xlt }}';
+        aiStatus.className = 'badge badge-secondary';
+    }
+});
+</script>
+
+{# AI Transcription Styles #}
+<style>
+.ai-transcription-section {
+    border: 2px solid #007bff;
+    border-radius: 10px;
+    background-color: #f8f9fa;
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+    }
+}
+
+#aiTranscriptionBtn {
+    min-width: 250px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+#transcriptionResult .card-text {
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+}
+</style> 

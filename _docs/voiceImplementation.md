@@ -1,3 +1,9 @@
+
+Idea:
+I want to create a new feature in this codebase. The feature is an AI voice transcriber and I want the general workflow to be at a user will create a new encounter form and on the new encounter form page there will be a large button at the bottom that is colourful that does not have any emojis that reads AI transcription and that button should be close to the reason for visit text input field but still be separate and when that button is pressed the open AI whisperer API is connected to and the speech to text model transcribes the conversation and then that transcription I want fed to a an open AI for text model and I want it to be fed as a prompt and then I want all of that transcription to be analyzed against a prompt that evaluates the transcription for clinical information so anything that is mentioned that is relevant to a medical diagnosis is then summarized and that summary is then generated on the summary page of the encounter form. 
+
+
+
 # Voice Recording & Transcription Implementation Plan for OpenEMR
 
 ## Overview

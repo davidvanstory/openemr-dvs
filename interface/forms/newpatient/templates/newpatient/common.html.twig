@@ -94,6 +94,11 @@
             {% include "newpatient/partials/common/fields/_issues.html.twig" %}
         </div>
 
+        {# AI Transcription Section - Separate component #}
+        <div class="form-row">
+            {% include "newpatient/partials/common/fields/_ai-transcription.html.twig" %}
+        </div>
+
         {# Form Buttons #}
         {% include "newpatient/partials/common/_form-controls.html.twig" %}
         {% include "newpatient/partials/common/_form-end.html.twig" %}

@@ -406,11 +406,7 @@ After MVP is working, you can enhance with:
 - Enhanced error handling and recovery
 - Security improvements (API key encryption)
 
-## Cost Considerations
 
-OpenAI Whisper API pricing (as of 2024):
-- **$0.006 per minute** of audio
-- Example: 5-minute recording = $0.03
-- 100 recordings per month = ~$3.00
 
-Monitor usage in OpenAI dashboard to track costs.
+
+
