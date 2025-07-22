@@ -3723,6 +3723,14 @@ $GLOBALS_METADATA = array(
             '',
             xl('CCDA conformance and validation API service URL. For testing (using ONLY test data) you can default to http://ccda.healthit.gov which should not be used to transmit PHI. Production sites can deploy their own by following instructions here https://github.com/onc-healthit/reference-ccda-validator.')
         ),
+
+        // Voice Transcription - OpenAI Whisper Integration
+        'openai_api_key' => array(
+            xl('OpenAI API Key'),
+            'encrypted',                      // data type  
+            '',
+            xl('API key for OpenAI Whisper voice transcription service. Required for voice recording features.')
+        ),
     ),
 
     'Rx' => array(
@@ -3922,7 +3930,7 @@ $GLOBALS_METADATA = array(
                 'br' => xl('Breton'),
                 'bg' => xl('Bulgarian'),
                 'my' => xl('Burmese'),
-                'ca' => xl('Catalan- Valencian'),
+                'ca' => xl('Catalan- Valencian'),
                 'ch' => xl('Chamorro'),
                 'ce' => xl('Chechen'),
                 'ny' => xl('Chichewa- Chewa- Nyanja'),
@@ -3954,7 +3962,7 @@ $GLOBALS_METADATA = array(
                 'gu' => xl('Gujarati'),
                 'ht' => xl('Haitian- Haitian Creole'),
                 'ha' => xl('Hausa'),
-                'he' => xl('Hebrew (modern)'),
+                'he' => xl('Hebrew (modern)'),
                 'hz' => xl('Herero'),
                 'hi' => xl('Hindi'),
                 'ho' => xl('Hiri Motu'),
@@ -4016,13 +4024,13 @@ $GLOBALS_METADATA = array(
                 'nr' => xl('South Ndebele'),
                 'oc' => xl('Occitan'),
                 'oj' => xl('Ojibwe, Ojibwa'),
-                'cu' => xl('Old Church Slavonic, Church Slavonic, Old Bulgarian'),
+                'cu' => xl('Old Church Slavonic, Church Slavonic, Old Bulgarian'),
                 'om' => xl('Oromo'),
                 'or' => xl('Oriya'),
                 'os' => xl('Ossetian, Ossetic'),
                 'pa' => xl('Panjabi, Punjabi'),
                 'pi' => xl('Pali'),
-                'fa' => xl('Persian (Farsi)'),
+                'fa' => xl('Persian (Farsi)'),
                 'pl' => xl('Polish'),
                 'ps' => xl('Pashto, Pushto'),
                 'pt' => xl('Portuguese'),
@@ -4059,7 +4067,7 @@ $GLOBALS_METADATA = array(
                 'tk' => xl('Turkmen'),
                 'tl' => xl('Tagalog'),
                 'tn' => xl('Tswana'),
-                'to' => xl('Tonga (Tonga Islands)'),
+                'to' => xl('Tonga (Tonga Islands)'),
                 'tr' => xl('Turkish'),
                 'ts' => xl('Tsonga'),
                 'tt' => xl('Tatar'),
