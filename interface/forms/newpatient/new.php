@@ -10,7 +10,15 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+$sessionAllowWrite = true;
+
 require_once(__DIR__ . "/../../globals.php");
+
+// When creating a new encounter, ensure the session encounter is cleared to prevent context conflicts.
+if (isset($_SESSION['encounter'])) {
+    unset($_SESSION['encounter']);
+}
+
 require_once("$srcdir/lists.inc.php");
 require_once("$srcdir/patient.inc.php");
 

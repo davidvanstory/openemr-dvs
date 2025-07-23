@@ -22,7 +22,7 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- Add unique index on encounter_uuid if it doesn't exist
+-- Drop the incorrect unique key if it exists
 SET @idx_exists = 0;
 SELECT COUNT(*) INTO @idx_exists
 FROM INFORMATION_SCHEMA.STATISTICS
@@ -30,10 +30,26 @@ WHERE TABLE_SCHEMA = DATABASE()
   AND TABLE_NAME = 'form_ai_summary'
   AND INDEX_NAME = 'encounter_uuid_unique';
 
+SET @sql = IF(@idx_exists > 0,
+    'ALTER TABLE `form_ai_summary` DROP INDEX `encounter_uuid_unique`',
+    'SELECT ''Index encounter_uuid_unique does not exist, skipping drop.''');
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- Add unique index on encounter if it doesn''t exist
+SET @idx_exists = 0;
+SELECT COUNT(*) INTO @idx_exists
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'form_ai_summary'
+  AND INDEX_NAME = 'encounter_unique';
+
 SET @sql = IF(@idx_exists = 0,
     'ALTER TABLE `form_ai_summary` 
-     ADD UNIQUE KEY `encounter_uuid_unique` (`encounter_uuid`)',
-    'SELECT ''Unique index encounter_uuid_unique already exists''');
+     ADD UNIQUE KEY `encounter_unique` (`encounter`)',
+    'SELECT ''Unique index encounter_unique already exists''');
 
 PREPARE stmt FROM @sql;
 EXECUTE stmt;

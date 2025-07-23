@@ -137,10 +137,14 @@ function saveTranscriptionToSession($transcription) {
         throw new Exception('Missing patient information in session');
     }
     
-    // Store transcription data in session
-    // We use an array to support multiple transcriptions per encounter if needed
+    // Clear any pending transcriptions for the current patient to avoid using stale data.
     if (!isset($_SESSION['pending_ai_transcriptions'])) {
         $_SESSION['pending_ai_transcriptions'] = [];
+    }
+    foreach ($_SESSION['pending_ai_transcriptions'] as $key => $pending) {
+        if (isset($pending['pid']) && $pending['pid'] == $_SESSION['pid']) {
+            unset($_SESSION['pending_ai_transcriptions'][$key]);
+        }
     }
     
     // For new encounters, use a special key that will be processed on save

@@ -107,4 +107,41 @@ Created a dedicated AI Summary form that automatically captures voice transcript
 - **Summary Display**: Uses `ai_summary_report($pid, $encounter, $cols, $id)` function called by forms.php
 - **Data Flow**: whisper_simple.php → form_ai_summary table → forms table registration → Summary tab display
 - **Error Handling**: Graceful fallback - transcription still works even if form creation fails
-- **Security**: Follows OpenEMR patterns with CSRF protection and ACL integration 
+- **Security**: Follows OpenEMR patterns with CSRF protection and ACL integration
+
+---
+
+Feature #4
+## Deferred AI Summary Creation
+
+### Overview
+Fixed orphaned AI summaries issue where transcriptions were being created before encounters existed in the database. Implemented deferred creation pattern that stores transcriptions in session until encounter is successfully saved.
+
+### Problem Solved
+- **Issue**: AI summaries were created with temporary encounter IDs that didn't match final saved encounter IDs
+- **Root Cause**: OpenEMR creates encounters only when saved, but transcriptions were happening before save
+- **Result**: Orphaned AI summaries that didn't appear in encounter summaries
+
+### Solution Flow
+1. Voice recording → Store in session (not database)
+2. Encounter save → Create encounter in database
+3. After save → Create AI summary with correct encounter ID
+4. Display → AI summary properly linked to encounter
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `interface/forms/newpatient/whisper_simple.php` | Changed from immediate database creation to session storage via `saveTranscriptionToSession()`, added `$sessionAllowWrite = true` for session persistence |
+| `interface/forms/newpatient/save.php` | Added post-save hook to create AI summaries from session data, enabled session writes, added comprehensive error logging |
+| `interface/forms/ai_summary/table.sql` | Added `encounter_uuid` column with unique constraint for permanent encounter linking |
+| `interface/forms/ai_summary/report.php` | Updated to display encounter UUID relationship and verify linking status |
+| `src/Services/AISummaryService.php` | Modified to handle optional encounter UUIDs gracefully without fatal errors |
+
+### Technical Details
+- **Session Storage**: Uses `'pending_new_encounter'` for new encounters, actual encounter ID for existing ones
+- **Session Persistence**: Required `$sessionAllowWrite = true` and `session_write_close()` due to OpenEMR's read-only session default  
+- **Data Flow**: Session → `AISummaryService::createFromSessionData()` → `form_ai_summary` table → `addForm()` → `forms` table → Display via `FormReportRenderer`
+- **UUID Handling**: Made encounter UUID optional to prevent fatal errors when UUID is not yet available
+- **Cleanup**: Session data automatically cleaned after successful AI summary creation
+- **Error Recovery**: Comprehensive logging at each step for debugging session/creation issues 

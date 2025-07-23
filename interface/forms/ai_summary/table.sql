@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS `form_ai_summary` (
   PRIMARY KEY (`id`),
   KEY `pid_encounter` (`pid`, `encounter`),
   KEY `status_index` (`processing_status`),
-  KEY `encounter_index` (`encounter`),
-  UNIQUE KEY `encounter_uuid_unique` (`encounter_uuid`),
+  UNIQUE KEY `encounter_unique` (`encounter`),
   KEY `encounter_uuid_index` (`encounter_uuid`)
 ) ENGINE=InnoDB COMMENT='Voice transcriptions and AI summaries for encounters'; 
