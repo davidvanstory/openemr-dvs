@@ -9,6 +9,7 @@
  */
 
 require_once(__DIR__ . "/../../globals.php");
+require_once("$srcdir/forms.inc.php");
 
 use OpenEMR\Common\Csrf\CsrfUtils;
 use OpenEMR\Common\Logging\SystemLogger;
@@ -64,19 +65,31 @@ try {
     // Call OpenAI Whisper API
     $transcription = transcribeWithWhisper($audioFile['tmp_name'], $audioFile['name'], $apiKey);
     
+    // Save transcription to AI Summary form
+    $formId = null;
+    try {
+        $formId = saveTranscriptionToAiSummaryForm($transcription);
+        error_log("AI Summary form created with ID: $formId");
+    } catch (Exception $e) {
+        error_log("Failed to save transcription to AI Summary form: " . $e->getMessage());
+        // Continue anyway - we still want to return the transcription
+    }
+    
     // Log success
     if (class_exists('OpenEMR\\Common\\Logging\\SystemLogger')) {
         (new SystemLogger())->info("Voice transcription completed", [
             'user' => $_SESSION['authUser'] ?? 'unknown',
             'file_size' => $audioFile['size'],
-            'transcription_length' => strlen($transcription)
+            'transcription_length' => strlen($transcription),
+            'ai_summary_form_id' => $formId
         ]);
     }
     
     // Return success response
     echo json_encode([
         'success' => true,
-        'transcription' => $transcription
+        'transcription' => $transcription,
+        'ai_summary_form_id' => $formId
     ]);
     
 } catch (Exception $e) {
@@ -94,6 +107,56 @@ try {
         'success' => false,
         'error' => $e->getMessage()
     ]);
+}
+
+/**
+ * Save transcription to AI Summary form and register it
+ *
+ * @param string $transcription The transcription text
+ * @return int|false The form ID if successful, false on failure
+ */
+function saveTranscriptionToAiSummaryForm($transcription) {
+    // Validate session data
+    if (empty($_SESSION['pid']) || empty($_SESSION['encounter'])) {
+        throw new Exception('Missing patient or encounter information in session');
+    }
+    
+    // Insert into form_ai_summary table
+    $sql = "INSERT INTO form_ai_summary 
+            (pid, encounter, user, groupname, authorized, activity, date, 
+             voice_transcription, summary_type, ai_model_used, processing_status, 
+             transcription_source, created_date) 
+            VALUES (?, ?, ?, ?, 1, 1, NOW(), ?, 'transcription', 'whisper-1', 'completed', 'voice_recording', NOW())";
+    
+    $formId = sqlInsert($sql, [
+        $_SESSION['pid'],
+        $_SESSION['encounter'], 
+        $_SESSION['authUser'] ?? 'unknown',
+        $_SESSION['authProvider'] ?? 'Default',
+        $transcription
+    ]);
+    
+    if (!$formId) {
+        throw new Exception('Failed to insert transcription into database');
+    }
+    
+    // Register the form in OpenEMR's forms table using standard function
+    $addFormResult = addForm(
+        $_SESSION["encounter"], 
+        "AI Summary", 
+        $formId, 
+        "ai_summary", 
+        $_SESSION["pid"], 
+        $_SESSION["authUserID"] ?? 1
+    );
+    
+    if (!$addFormResult) {
+        // If form registration failed, clean up the ai_summary record
+        sqlStatement("DELETE FROM form_ai_summary WHERE id = ?", [$formId]);
+        throw new Exception('Failed to register form in OpenEMR');
+    }
+    
+    return $formId;
 }
 
 /**

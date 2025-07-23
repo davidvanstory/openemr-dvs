@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS `form_ai_summary` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `pid` bigint(20) NOT NULL,
+  `encounter` bigint(20) NOT NULL,
+  `user` varchar(255) DEFAULT NULL,
+  `groupname` varchar(255) DEFAULT NULL,
+  `authorized` tinyint(4) DEFAULT 1,
+  `activity` tinyint(4) DEFAULT 1,
+  `date` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `voice_transcription` LONGTEXT COMMENT 'Original voice transcription text',
+  `ai_summary` LONGTEXT COMMENT 'AI-generated summary of encounter (future use)',
+  `summary_type` ENUM('transcription', 'summary', 'clinical_notes') DEFAULT 'transcription',
+  `ai_model_used` VARCHAR(50) DEFAULT 'whisper-1',
+  `processing_status` ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'completed',
+  `transcription_source` VARCHAR(100) DEFAULT 'voice_recording',
+  `created_date` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `last_updated` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `pid_encounter` (`pid`, `encounter`),
+  KEY `status_index` (`processing_status`),
+  KEY `encounter_index` (`encounter`)
+) ENGINE=InnoDB COMMENT='Voice transcriptions and AI summaries for encounters'; 
