@@ -11,6 +11,8 @@
 
 require_once(__DIR__ . "/../../globals.php");
 
+use OpenEMR\Common\Uuid\UuidRegistry;
+
 /**
  * Display AI Summary form data in encounter summary
  *
@@ -22,9 +24,15 @@ require_once(__DIR__ . "/../../globals.php");
  */
 function ai_summary_report($pid, $encounter, $cols, $id): void
 {
-    // Fetch the AI summary data from database
+    // Fetch the AI summary data with encounter information
     $res = sqlQuery(
-        "SELECT * FROM form_ai_summary WHERE id = ? AND pid = ? AND encounter = ?", 
+        "SELECT ais.*, 
+                fe.date as encounter_date,
+                fe.reason as encounter_reason,
+                fe.uuid as current_encounter_uuid
+         FROM form_ai_summary ais
+         LEFT JOIN form_encounter fe ON fe.uuid = ais.encounter_uuid
+         WHERE ais.id = ? AND ais.pid = ? AND ais.encounter = ?", 
         array($id, $pid, $encounter)
     );
     
@@ -48,18 +56,56 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
         echo "</div>";
     }
     
+    // Display AI summary if available (for future use)
+    if (!empty($res['ai_summary'])) {
+        echo "<div class='summary-content mb-3'>";
+        echo "<h6 class='text-secondary'>" . xlt("AI Summary:") . "</h6>";
+        echo "<div class='border-left border-success pl-3'>";
+        echo "<p class='mb-0'>" . text($res['ai_summary']) . "</p>";
+        echo "</div>";
+        echo "</div>";
+    }
+    
     // Display metadata
     echo "<div class='summary-meta mt-3 pt-2 border-top'>";
     echo "<small class='text-muted'>";
     echo xlt("Generated:") . " " . text(oeFormatShortDate($res['date']));
+    
     if (!empty($res['ai_model_used'])) {
         echo " | " . xlt("Model:") . " " . text($res['ai_model_used']);
     }
-    if (!empty($res['user'])) {
-        echo " | " . xlt("By:") . " " . text($res['user']);
+    
+    if (!empty($res['processing_status'])) {
+        $statusClass = ($res['processing_status'] == 'completed') ? 'success' : 
+                      (($res['processing_status'] == 'failed') ? 'danger' : 'warning');
+        echo " | <span class='badge badge-" . $statusClass . "'>" . 
+             text(ucfirst($res['processing_status'])) . "</span>";
     }
+    
+    // Display encounter linking status
+    if (!empty($res['encounter_uuid'])) {
+        $uuidString = UuidRegistry::uuidToString($res['encounter_uuid']);
+        echo "<br/>" . xlt("Linked to encounter:") . " ";
+        
+        if (!empty($res['encounter_date'])) {
+            echo text(oeFormatShortDate($res['encounter_date']));
+            echo " <span class='text-success'><i class='fa fa-check-circle'></i> " . 
+                 xlt("Verified") . "</span>";
+        } else {
+            echo "<span class='text-warning'><i class='fa fa-exclamation-triangle'></i> " . 
+                 xlt("UUID not found") . "</span>";
+        }
+        
+        // Display UUID in debug mode
+        if ($GLOBALS['debug_mode'] ?? false) {
+            echo "<br/><code class='small'>" . text($uuidString) . "</code>";
+        }
+    } else {
+        echo "<br/><span class='text-muted'><i class='fa fa-unlink'></i> " . 
+             xlt("Not linked to encounter UUID") . "</span>";
+    }
+    
     echo "</small>";
     echo "</div>";
-    
     echo "</div>";
 } 

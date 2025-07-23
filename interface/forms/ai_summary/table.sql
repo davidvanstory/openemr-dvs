@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS `form_ai_summary` (
   `id` bigint(20) NOT NULL AUTO_INCREMENT,
   `pid` bigint(20) NOT NULL,
   `encounter` bigint(20) NOT NULL,
+  `encounter_uuid` binary(16) DEFAULT NULL COMMENT 'UUID of parent encounter for permanent linking',
   `user` varchar(255) DEFAULT NULL,
   `groupname` varchar(255) DEFAULT NULL,
   `authorized` tinyint(4) DEFAULT 1,
@@ -18,5 +19,7 @@ CREATE TABLE IF NOT EXISTS `form_ai_summary` (
   PRIMARY KEY (`id`),
   KEY `pid_encounter` (`pid`, `encounter`),
   KEY `status_index` (`processing_status`),
-  KEY `encounter_index` (`encounter`)
+  KEY `encounter_index` (`encounter`),
+  UNIQUE KEY `encounter_uuid_unique` (`encounter_uuid`),
+  KEY `encounter_uuid_index` (`encounter_uuid`)
 ) ENGINE=InnoDB COMMENT='Voice transcriptions and AI summaries for encounters'; 

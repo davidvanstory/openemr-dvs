@@ -12,9 +12,13 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+// Enable session writes for this script
+$sessionAllowWrite = true;
+
 require_once(__DIR__ . "/../../globals.php");
 require_once("$srcdir/forms.inc.php");
 require_once("$srcdir/encounter.inc.php");
+require_once("$srcdir/lists.inc.php");
 
 use OpenEMR\Common\Acl\AclMain;
 use OpenEMR\Common\Csrf\CsrfUtils;
@@ -26,6 +30,14 @@ use OpenEMR\Services\PatientService;
 use OpenEMR\Common\Uuid\UuidRegistry;
 use OpenEMR\Common\Database\QueryUtils;
 use OpenEMR\Services\PatientIssuesService;
+
+// DEBUG: Log session state at start
+error_log("=== SAVE.PHP SESSION DEBUG START ===");
+error_log("Session ID at start: " . session_id());
+error_log("Session status: " . session_status());
+error_log("Pending AI transcriptions at start: " . print_r($_SESSION['pending_ai_transcriptions'] ?? 'NOT SET', true));
+error_log("All session keys: " . implode(', ', array_keys($_SESSION)));
+error_log("=== SAVE.PHP SESSION DEBUG END ===");
 
 if (!CsrfUtils::verifyCsrfToken($_POST["csrf_token_form"])) {
     CsrfUtils::csrfNotVerified();
@@ -176,6 +188,113 @@ if ($mode == 'new') {
 }
 
 setencounter($encounter);
+
+// After encounter is successfully saved, check for pending AI transcriptions
+// This ensures the encounter exists in the database before creating AI summaries
+
+// DEBUG: Add visible output
+echo "<script>console.log('=== AI SUMMARY DEBUG ===');</script>";
+echo "<script>console.log('Encounter saved. ID: " . $encounter . "');</script>";
+echo "<script>console.log('Session data:', " . json_encode($_SESSION['pending_ai_transcriptions'] ?? []) . ");</script>";
+
+error_log("=== AI SUMMARY CREATION CHECK START ===");
+error_log("Session pending_ai_transcriptions: " . print_r($_SESSION['pending_ai_transcriptions'] ?? 'NOT SET', true));
+error_log("Mode: " . $mode . ", Encounter: " . $encounter . ", PID: " . $pid);
+
+if (!empty($_SESSION['pending_ai_transcriptions'])) {
+    error_log("Found pending AI transcriptions, processing...");
+    
+    try {
+        // Initialize AI Summary Service
+        $aiServicePath = $GLOBALS['fileroot'] . "/src/Services/AISummaryService.php";
+        error_log("Looking for AISummaryService at: " . $aiServicePath);
+        
+        if (!file_exists($aiServicePath)) {
+            error_log("ERROR: AISummaryService.php not found at: " . $aiServicePath);
+            throw new Exception("AISummaryService not found");
+        }
+        
+        require_once($aiServicePath);
+        
+        if (!class_exists('\\OpenEMR\\Services\\AISummaryService')) {
+            error_log("ERROR: AISummaryService class not found after requiring file");
+            throw new Exception("AISummaryService class not found");
+        }
+        
+        $aiSummaryService = new \OpenEMR\Services\AISummaryService();
+        error_log("AISummaryService instance created successfully");
+        
+        // Get the encounter UUID from the saved encounter
+        $encounterUuid = null;
+        if ($mode == 'new' && !empty($result) && $result->hasData()) {
+            $encounterData = $result->getData()[0];
+            error_log("New encounter data keys: " . implode(', ', array_keys($encounterData)));
+            error_log("Full encounter data: " . print_r($encounterData, true));
+            $encounterUuid = $encounterData['uuid'] ?? null;
+            error_log("New encounter UUID: " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
+        } elseif ($mode == 'update' && !empty($encounter)) {
+            // For updates, fetch the UUID from the database
+            $encounterService = new EncounterService();
+            $encounterData = $encounterService->getEncounterById($encounter);
+            error_log("Update encounter data: " . print_r($encounterData, true));
+            $encounterUuid = $encounterData['uuid'] ?? null;
+            error_log("Updated encounter UUID: " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
+        }
+        
+        // Check both the actual encounter ID and the pending new encounter key
+        $keysToCheck = [$encounter];
+        if ($mode == 'new') {
+            $keysToCheck[] = 'pending_new_encounter';
+        }
+        
+        error_log("Checking keys for transcriptions: " . implode(', ', $keysToCheck));
+        
+        foreach ($keysToCheck as $key) {
+            if (!empty($_SESSION['pending_ai_transcriptions'][$key])) {
+                error_log("Found transcription for key: $key");
+                $transcriptionData = $_SESSION['pending_ai_transcriptions'][$key];
+                
+                // If this is a new encounter and we found it under pending_new_encounter, 
+                // move it to the actual encounter ID
+                if ($key === 'pending_new_encounter' && $mode == 'new') {
+                    $_SESSION['pending_ai_transcriptions'][$encounter] = $_SESSION['pending_ai_transcriptions'][$key];
+                    error_log("Moved transcription from pending_new_encounter to encounter $encounter");
+                }
+                
+                try {
+                    // Create the AI summary
+                    error_log("Creating AI summary for encounter $encounter with UUID " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
+                    $summaryResult = $aiSummaryService->createFromSessionData($encounter, $encounterUuid, $pid);
+                    
+                    if ($summaryResult && isset($summaryResult['form_id'])) {
+                        error_log("AI Summary created successfully with form ID: " . $summaryResult['form_id']);
+                        error_log("=== AI SUMMARY CREATION SUCCESS ===");
+                        
+                        // Clean up the session
+                        unset($_SESSION['pending_ai_transcriptions']['pending_new_encounter']);
+                        unset($_SESSION['pending_ai_transcriptions'][$encounter]);
+                        error_log("Cleaned up session data for encounter $encounter");
+                        
+                        // Success - break out of the loop
+                        break;
+                    } else {
+                        error_log("ERROR: AI summary creation returned invalid result: " . print_r($summaryResult, true));
+                    }
+                } catch (Exception $e) {
+                    error_log("ERROR creating AI summary: " . $e->getMessage());
+                    error_log("Stack trace: " . $e->getTraceAsString());
+                    // Continue to next key
+                }
+            }
+        }
+    } catch (Exception $e) {
+        error_log("ERROR creating AI summary: " . $e->getMessage());
+        error_log("Stack trace: " . $e->getTraceAsString());
+    }
+} else {
+    error_log("No pending AI transcriptions found in session");
+}
+error_log("=== AI SUMMARY CREATION CHECK END ===");
 
 // Update the list of issues associated with this encounter.
 // always delete the issues for this encounter

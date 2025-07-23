@@ -8,6 +8,9 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+// Enable session writes for this script
+$sessionAllowWrite = true;
+
 require_once(__DIR__ . "/../../globals.php");
 require_once("$srcdir/forms.inc.php");
 
@@ -65,23 +68,28 @@ try {
     // Call OpenAI Whisper API
     $transcription = transcribeWithWhisper($audioFile['tmp_name'], $audioFile['name'], $apiKey);
     
-    // Save transcription to AI Summary form
-    $formId = null;
-    try {
-        $formId = saveTranscriptionToAiSummaryForm($transcription);
-        error_log("AI Summary form created with ID: $formId");
-    } catch (Exception $e) {
-        error_log("Failed to save transcription to AI Summary form: " . $e->getMessage());
-        // Continue anyway - we still want to return the transcription
-    }
+    // Save transcription temporarily in session instead of creating AI summary immediately
+    // This ensures the encounter exists before we create the AI summary
+    saveTranscriptionToSession($transcription);
+    
+    // CRITICAL: Write session data to storage immediately
+    // This ensures the data is available for the next request
+    session_write_close();
+    
+    // Log for debugging
+    error_log("=== WHISPER_SIMPLE DEBUG ===");
+    error_log("Transcription saved to session");
+    error_log("Session ID: " . session_id());
+    error_log("Encounter key used: " . ($encounterKey ?? 'unknown'));
+    error_log("Session was written and closed to ensure persistence");
     
     // Log success
     if (class_exists('OpenEMR\\Common\\Logging\\SystemLogger')) {
-        (new SystemLogger())->info("Voice transcription completed", [
+        (new SystemLogger())->info("Voice transcription completed and stored in session", [
             'user' => $_SESSION['authUser'] ?? 'unknown',
             'file_size' => $audioFile['size'],
             'transcription_length' => strlen($transcription),
-            'ai_summary_form_id' => $formId
+            'session_encounter' => $_SESSION['encounter'] ?? 'none'
         ]);
     }
     
@@ -89,7 +97,12 @@ try {
     echo json_encode([
         'success' => true,
         'transcription' => $transcription,
-        'ai_summary_form_id' => $formId
+        'message' => 'Transcription saved to session for later processing',
+        'debug' => [
+            'session_id' => session_id(),
+            'encounter_key' => $encounterKey ?? 'unknown',
+            'pending_count' => count($_SESSION['pending_ai_transcriptions'] ?? [])
+        ]
     ]);
     
 } catch (Exception $e) {
@@ -110,53 +123,42 @@ try {
 }
 
 /**
- * Save transcription to AI Summary form and register it
+ * Save transcription temporarily to session for later processing
+ * This ensures encounter exists before creating AI summary
  *
  * @param string $transcription The transcription text
- * @return int|false The form ID if successful, false on failure
+ * @return void
  */
-function saveTranscriptionToAiSummaryForm($transcription) {
-    // Validate session data
-    if (empty($_SESSION['pid']) || empty($_SESSION['encounter'])) {
-        throw new Exception('Missing patient or encounter information in session');
+function saveTranscriptionToSession($transcription) {
+    // For new encounters, we may not have an encounter ID yet
+    // We'll use a temporary key and update it when the encounter is saved
+    
+    if (empty($_SESSION['pid'])) {
+        throw new Exception('Missing patient information in session');
     }
     
-    // Insert into form_ai_summary table
-    $sql = "INSERT INTO form_ai_summary 
-            (pid, encounter, user, groupname, authorized, activity, date, 
-             voice_transcription, summary_type, ai_model_used, processing_status, 
-             transcription_source, created_date) 
-            VALUES (?, ?, ?, ?, 1, 1, NOW(), ?, 'transcription', 'whisper-1', 'completed', 'voice_recording', NOW())";
-    
-    $formId = sqlInsert($sql, [
-        $_SESSION['pid'],
-        $_SESSION['encounter'], 
-        $_SESSION['authUser'] ?? 'unknown',
-        $_SESSION['authProvider'] ?? 'Default',
-        $transcription
-    ]);
-    
-    if (!$formId) {
-        throw new Exception('Failed to insert transcription into database');
+    // Store transcription data in session
+    // We use an array to support multiple transcriptions per encounter if needed
+    if (!isset($_SESSION['pending_ai_transcriptions'])) {
+        $_SESSION['pending_ai_transcriptions'] = [];
     }
     
-    // Register the form in OpenEMR's forms table using standard function
-    $addFormResult = addForm(
-        $_SESSION["encounter"], 
-        "AI Summary", 
-        $formId, 
-        "ai_summary", 
-        $_SESSION["pid"], 
-        $_SESSION["authUserID"] ?? 1
-    );
+    // For new encounters, use a special key that will be processed on save
+    $encounterKey = !empty($_SESSION['encounter']) ? $_SESSION['encounter'] : 'pending_new_encounter';
     
-    if (!$addFormResult) {
-        // If form registration failed, clean up the ai_summary record
-        sqlStatement("DELETE FROM form_ai_summary WHERE id = ?", [$formId]);
-        throw new Exception('Failed to register form in OpenEMR');
-    }
+    // Store with encounter ID as key (or 'pending_new_encounter' for new encounters)
+    $_SESSION['pending_ai_transcriptions'][$encounterKey] = [
+        'transcription' => $transcription,
+        'timestamp' => time(),
+        'model' => 'whisper-1',
+        'pid' => $_SESSION['pid'],
+        'user' => $_SESSION['authUser'] ?? 'unknown',
+        'provider' => $_SESSION['authProvider'] ?? 'Default',
+        'source' => 'voice_recording',
+        'is_new_encounter' => empty($_SESSION['encounter'])
+    ];
     
-    return $formId;
+    error_log("Transcription stored in session for encounter key: " . $encounterKey);
 }
 
 /**
