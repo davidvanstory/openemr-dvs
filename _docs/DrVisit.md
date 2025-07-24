@@ -1,0 +1,39 @@
+Doctor Visit Transcription
+    - hey, Jason, tell me about your shortness of breath. I heard you're having some shortness of breath.
+    - Yeah, you know, it's just the last week or so I found coming up and down the stairs in the house, I started to feel shortness of breath, a little bit of dizziness when I got to the top of the stairs. But I sat down, I took 10 deep breaths and I was fine. But then when I woke up in the morning, I kind of tripped a little bit because I was so short of breath. And yeah, the dizziness came back.
+    - Okay, got it. And so have you noticed that the shortness of breath is worse with activity?
+    - Yes, definitely. When I'm going up the stairs, it's much worse than going down the stairs or walking on a flat surface.
+    - Have you noticed any chest pain or chest pressure?
+    - No chest pain, but I did feel a little tingling in my shoulderon the side of my heart. Just, you know, that's why I called. Okay, got it. Have you noticed any lightheadedness? You did mention lightheadedness, right? Yeah, I did. Yeah, when I woke up in the morning and then when I got to the top of the stairs. So those were the two instances of feeling lightheaded in the last two days.
+    - Okay. You know, I'm looking at my medical record right now and you have a history of diabetes and hypertension. I'm just making this up. Yeah. And hypertension. And you know, your diabetes is totally out of control.
+    - I'm working on it, doc.
+    - Yeah. You know, I saw you at McDonald's last week and you had like six Big Macs in front of you.
+    - Those weren't all for me, but yes, I did eat too. I have been overeating. I'm 40 pounds overweight and the diabetes isn't good. I got to cut back.
+    - Yeah. Well, I'm not here to confront you on that. I'm only bringing it up because, you know, diabetes, hypertension. When you tell me you have shortness of breath, I'm worried it could be related to your heart because you have these risk factors. So I think we should take this seriously. So I want you to come in this afternoon. Let's get an EKG and an echocardiogram. Okay. Those are quick tests. That's going to give us a sense of how your heart's functioning.
+    - Okay, great. Are they covered or do I have to come out of pocket for those?
+    - No, they're covered. They're covered. They're easy.
+    - And I can take them both today or do I have to schedule them?
+    - No, let's get it done. Let's get it done. I don't want to waste too much time. Yeah. And then, you know, let's talk about your diabetes. You know, like I'm going to ask our nutritionist to call you next weekend. I want them to start you on a low salt, vegan, diabetic diet.
+    - Okay, I think that's going to help. Can I just do the Ozempic or Wagovi? I keep hearing about those.
+    - That one you might need to pay a lot of money for. So I'm going to ask our nutritionist to call you next week and discuss all these new weight loss medications. All right. And then, you know, also today, you know, in terms of your lightheadedness, I think that's probably because we have you on too many medications, actually, for your blood pressure. So I think your lightheadedness is because of what we call orthostatic hypotension. When you stand up or you go up the stairs, you're feeling lightheaded. So I want you to stop taking your metoprolol.
+    - All right? Okay, stop taking my metoprolol.
+    - Yeah, yeah. Last thing, you know, I'm sorry to confront you on this. You're a really famous person. You're traveling the country. You're doing all sorts of stuff. The world.
+    - I'm totally willing to take a selfie. It's cool.
+    - Oh, sweet. And you're under a lot of stress, too.
+    - Yeah, that's true. That's true.
+    - Last time we chatted, you were drinking like five bottles of wine every night. Good wine?
+    - Oh, yeah, it's good wine. Yeah, I mean, I was sharing them.
+    - Yeah. Okay, so where are you at now?
+    - I mean, I have two to six glasses of wine a night.
+    - Okay, all right.
+    - It's a range, you know, depends.
+    - It's a little bit better, maybe, than where we were before. So in terms of your alcohol habit, I'm going to ask our behavioral health therapist to call you next week and just sort of talk through your stress and see if there are other things that we could get you going with that could help. All right?
+    - All right, yeah. Well, you try doing six podcasts a week and we'll see how stressed out you are.
+    - I get it. I get it.
+    - All right, last thing. I want you to start taking, you know, for your high cholesterol, I want you to start taking atorvastatin 40 milligrams a day, okay?
+    - Okay, atorvastatin?
+    - Yeah, I got you. Don't worry. We're going to give you something that helps you. Yeah, atorvastatin, also called Lipitor.
+    - Oh, yeah, I've heard of that.
+    - Yeah. All right, good. I think we have a good plan. Anything else you want to talk about?
+    - Nope, just want to get that ozempic or wegovy. If you can get it covered under my insurance, that'd be awesome.
+    - Okay, we'll talk about it.
