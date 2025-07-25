@@ -12,6 +12,7 @@
 require_once(__DIR__ . "/../../globals.php");
 
 use OpenEMR\Common\Uuid\UuidRegistry;
+use OpenEMR\Common\Csrf\CsrfUtils;
 
 /**
  * Display AI Summary form data in encounter summary
@@ -54,27 +55,46 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
         echo "<p class='mb-0'>" . text($res['voice_transcription']) . "</p>";
         echo "</div>";
         echo "</div>";
-    }
-    
-    // Display AI summary if available (for future use)
-    if (!empty($res['ai_summary'])) {
-        echo "<div class='summary-content mb-3'>";
-        echo "<h6 class='text-secondary'>" . xlt("AI Summary:") . "</h6>";
-        echo "<div class='border-left border-success pl-3'>";
-        echo "<p class='mb-0'>" . text($res['ai_summary']) . "</p>";
-        echo "</div>";
+    } else {
+        echo "<div class='alert alert-info mb-3'>";
+        echo "<i class='fas fa-info-circle'></i> " . xlt("No transcription available. Generate Summary will use DrVisit.md for testing.");
         echo "</div>";
     }
     
-    // AI Scribe Card with Generate Summary button
-    echo "<div class='card mb-3'>";
-    echo "  <div class='card-header'>";
-    echo "    <h5>" . xlt("AI Scribe") . "</h5>";
+    // AI Scribe Card with Generate Summary button - UPDATED
+    echo "<div class='card mb-3 ai-scribe-card'>";
+    echo "  <div class='card-header bg-success text-white'>";
+    echo "    <h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5>";
     echo "  </div>";
     echo "  <div class='card-body'>";
-    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success'>" . xlt("Generate Summary") . "</button>";
+    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg' data-form-id='" . attr($id) . "'>";
+    echo "      <i class='fas fa-magic'></i> " . xlt("Generate Summary");
+    echo "    </button>";
+    echo "    <div id='summary_status_" . attr($id) . "' class='mt-2'></div>";
     echo "  </div>";
     echo "</div>";
+    
+    // Display AI summary if available
+    if (!empty($res['ai_summary'])) {
+        echo "<div class='summary-content mb-3'>";
+        echo "<h6 class='text-secondary'>" . xlt("AI Generated Summary:") . "</h6>";
+        echo "<div class='card'>";
+        echo "  <div class='card-body'>";
+        echo "    <div id='ai_summary_content_" . attr($id) . "' style='white-space: pre-wrap;'>" . text($res['ai_summary']) . "</div>";
+        echo "  </div>";
+        echo "</div>";
+        echo "</div>";
+    } else {
+        // Hidden summary display that will be shown after generation
+        echo "<div id='summary_display_" . attr($id) . "' class='summary-content mb-3 d-none'>";
+        echo "<h6 class='text-secondary'>" . xlt("AI Generated Summary:") . "</h6>";
+        echo "<div class='card'>";
+        echo "  <div class='card-body'>";
+        echo "    <div id='ai_summary_content_" . attr($id) . "' style='white-space: pre-wrap;'></div>";
+        echo "  </div>";
+        echo "</div>";
+        echo "</div>";
+    }
     
     // Display metadata
     echo "<div class='summary-meta mt-3 pt-2 border-top'>";
@@ -105,11 +125,6 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
             echo "<span class='text-warning'><i class='fa fa-exclamation-triangle'></i> " . 
                  xlt("UUID not found") . "</span>";
         }
-        
-        // Display UUID in debug mode
-        if ($GLOBALS['debug_mode'] ?? false) {
-            echo "<br/><code class='small'>" . text($uuidString) . "</code>";
-        }
     } else {
         echo "<br/><span class='text-muted'><i class='fa fa-unlink'></i> " . 
              xlt("Not linked to encounter UUID") . "</span>";
@@ -118,4 +133,96 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     echo "</small>";
     echo "</div>";
     echo "</div>";
+    
+    // Add JavaScript for Generate Summary functionality
+    $csrfToken = CsrfUtils::collectCsrfToken();
+    echo "<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const generateBtn = document.getElementById('btn_generate_summary_" . attr($id) . "');
+        const statusDiv = document.getElementById('summary_status_" . attr($id) . "');
+        const summaryDisplay = document.getElementById('summary_display_" . attr($id) . "');
+        const summaryContent = document.getElementById('ai_summary_content_" . attr($id) . "');
+        
+        if (generateBtn) {
+            generateBtn.addEventListener('click', async function() {
+                const formId = this.getAttribute('data-form-id');
+                
+                // Update button state
+                generateBtn.disabled = true;
+                generateBtn.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> " . xlt("Generating...") . "';
+                statusDiv.innerHTML = '<div class=\"alert alert-info\">" . xlt("Generating AI summary from transcription, please wait...") . "</div>';
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('form_id', formId);
+                    formData.append('csrf_token_form', '" . attr($csrfToken) . "');
+                    
+                    const response = await fetch('" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        // Display the generated summary
+                        summaryContent.textContent = result.summary;
+                        if (summaryDisplay) {
+                            summaryDisplay.classList.remove('d-none');
+                        }
+                        
+                        statusDiv.innerHTML = '<div class=\"alert alert-success\">' +
+                            '<i class=\"fas fa-check-circle\"></i> " . xlt("AI summary generated successfully!") . "' +
+                            '</div>';
+                        
+                        // Auto-hide success message after 3 seconds
+                        setTimeout(() => {
+                            statusDiv.innerHTML = '';
+                        }, 3000);
+                        
+                    } else {
+                        throw new Error(result.error || 'Unknown error occurred');
+                    }
+                    
+                } catch (error) {
+                    console.error('Summary generation error:', error);
+                    statusDiv.innerHTML = '<div class=\"alert alert-danger\">' +
+                        '<i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message +
+                        '</div>';
+                } finally {
+                    // Reset button state
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = '<i class=\"fas fa-magic\"></i> " . xlt("Generate Summary") . "';
+                }
+            });
+        }
+    });
+    </script>";
+    
+    // Add CSS for better styling
+    echo "<style>
+    .ai-scribe-card {
+        border: 2px solid #28a745;
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.1);
+    }
+    
+    .ai-scribe-card .btn-success {
+        font-size: 1.1em;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 8px;
+        box-shadow: 0 3px 6px rgba(40, 167, 69, 0.3);
+        transition: all 0.2s ease;
+    }
+    
+    .ai-scribe-card .btn-success:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 10px rgba(40, 167, 69, 0.4);
+    }
+    
+    .ai-scribe-card .btn-success:disabled {
+        transform: none;
+        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.2);
+    }
+    </style>";
 } 
