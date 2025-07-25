@@ -66,6 +66,16 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
         echo "</div>";
     }
     
+    // AI Scribe Card with Generate Summary button
+    echo "<div class='card mb-3'>";
+    echo "  <div class='card-header'>";
+    echo "    <h5>" . xlt("AI Scribe") . "</h5>";
+    echo "  </div>";
+    echo "  <div class='card-body'>";
+    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success'>" . xlt("Generate Summary") . "</button>";
+    echo "  </div>";
+    echo "</div>";
+    
     // Display metadata
     echo "<div class='summary-meta mt-3 pt-2 border-top'>";
     echo "<small class='text-muted'>";

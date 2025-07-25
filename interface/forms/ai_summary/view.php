@@ -66,6 +66,18 @@ if ($formid) {
             </div>
         <?php endif; ?>
         
+        <!-- AI Scribe Card -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5><?php echo xlt("AI Scribe"); ?></h5>
+            </div>
+            <div class="card-body">
+                <button id="btn_generate_summary" class="btn btn-success">
+                    <?php echo xlt("Generate Summary"); ?>
+                </button>
+            </div>
+        </div>
+        
         <div class="mt-3">
             <a href="<?php echo $GLOBALS['form_exit_url']; ?>" class="btn btn-secondary">
                 <?php echo xlt("Return to Encounter"); ?>
