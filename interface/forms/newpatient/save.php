@@ -168,6 +168,23 @@ if ($mode == 'new') {
         die("Error creating encounter: " . var_export($result->getValidationMessages(), true));
     }
     $encounter = $result->getData()[0]['eid'];
+
+    $newEncounterData = $result->getData()[0];
+    $encounterUuidBytes = $newEncounterData['uuid'] ?? null;
+
+    // Create a blank AI Summary form by default.
+    $blankSummarySql = "INSERT INTO form_ai_summary (pid, encounter, encounter_uuid, user, groupname, authorized, activity, date, summary_type, processing_status, voice_transcription) VALUES (?, ?, ?, ?, ?, 1, 1, NOW(), 'transcription', 'pending', '')";
+    $blankFormId = sqlInsert($blankSummarySql, [
+        $pid,
+        $encounter,
+        $encounterUuidBytes,
+        $_SESSION['authUser'],
+        $_SESSION['authProvider']
+    ]);
+
+    if ($blankFormId) {
+        addForm($encounter, "AI Summary", $blankFormId, "ai_summary", $pid, $_SESSION["authUserID"]);
+    }
 } elseif ($mode == 'update') {
     $id = $_POST["id"];
     // Get encounter UUID
@@ -202,94 +219,75 @@ error_log("Session pending_ai_transcriptions: " . print_r($_SESSION['pending_ai_
 error_log("Mode: " . $mode . ", Encounter: " . $encounter . ", PID: " . $pid);
 
 if (!empty($_SESSION['pending_ai_transcriptions'])) {
-    error_log("Found pending AI transcriptions, processing...");
-    
+    error_log("Found pending AI transcriptions, processing for update...");
     try {
-        // Initialize AI Summary Service
-        $aiServicePath = $GLOBALS['fileroot'] . "/src/Services/AISummaryService.php";
-        error_log("Looking for AISummaryService at: " . $aiServicePath);
-        
-        if (!file_exists($aiServicePath)) {
-            error_log("ERROR: AISummaryService.php not found at: " . $aiServicePath);
-            throw new Exception("AISummaryService not found");
-        }
-        
-        require_once($aiServicePath);
-        
-        if (!class_exists('\\OpenEMR\\Services\\AISummaryService')) {
-            error_log("ERROR: AISummaryService class not found after requiring file");
-            throw new Exception("AISummaryService class not found");
-        }
-        
-        $aiSummaryService = new \OpenEMR\Services\AISummaryService();
-        error_log("AISummaryService instance created successfully");
-        
-        // Get the encounter UUID from the saved encounter
-        $encounterUuid = null;
-        if ($mode == 'new' && !empty($result) && $result->hasData()) {
-            $encounterData = $result->getData()[0];
-            error_log("New encounter data keys: " . implode(', ', array_keys($encounterData)));
-            error_log("Full encounter data: " . print_r($encounterData, true));
-            $encounterUuid = $encounterData['uuid'] ?? null;
-            error_log("New encounter UUID: " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
-        } elseif ($mode == 'update' && !empty($encounter)) {
-            // For updates, fetch the UUID from the database
-            $encounterService = new EncounterService();
-            $encounterData = $encounterService->getEncounterById($encounter);
-            error_log("Update encounter data: " . print_r($encounterData, true));
-            $encounterUuid = $encounterData['uuid'] ?? null;
-            error_log("Updated encounter UUID: " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
-        }
-        
-        // Check both the actual encounter ID and the pending new encounter key
-        $keysToCheck = [$encounter];
-        if ($mode == 'new') {
-            $keysToCheck[] = 'pending_new_encounter';
-        }
-        
-        error_log("Checking keys for transcriptions: " . implode(', ', $keysToCheck));
-        
-        foreach ($keysToCheck as $key) {
-            if (!empty($_SESSION['pending_ai_transcriptions'][$key])) {
-                error_log("Found transcription for key: $key");
-                $transcriptionData = $_SESSION['pending_ai_transcriptions'][$key];
+        $transcriptionData = null;
+        $sessionKey = ($mode == 'new') ? 'pending_new_encounter' : $encounter;
+
+        if (isset($_SESSION['pending_ai_transcriptions'][$sessionKey])) {
+            $transcriptionData = $_SESSION['pending_ai_transcriptions'][$sessionKey];
+
+            error_log("Updating existing AI Summary form for encounter: " . $encounter);
+            // SURGICAL FIX: Find the most recent blank form ID first, then update it specifically
+            // This prevents updating forms from other contexts that might have stale data
+            $findBlankFormSql = "SELECT id FROM form_ai_summary " .
+                               "WHERE encounter = ? AND pid = ? " .
+                               "AND processing_status = 'pending' " .
+                               "AND (voice_transcription = '' OR voice_transcription IS NULL) " .
+                               "ORDER BY id DESC LIMIT 1";
+            
+            $blankForm = sqlQuery($findBlankFormSql, [$encounter, $pid]);
+            
+            if ($blankForm && !empty($blankForm['id'])) {
+                $updateSql = "UPDATE form_ai_summary SET " .
+                                "voice_transcription = ?, " .
+                                "processing_status = 'completed', " .
+                                "ai_model_used = ?, " .
+                                "transcription_source = ?, " .
+                                "user = ?, " .
+                                "groupname = ? " .
+                              "WHERE id = ?";
+
+                $updateResult = sqlStatement($updateSql, [
+                    $transcriptionData['transcription'],
+                    $transcriptionData['model'],
+                    $transcriptionData['source'],
+                    $transcriptionData['user'],
+                    $transcriptionData['provider'],
+                    $blankForm['id']
+                ]);
                 
-                // If this is a new encounter and we found it under pending_new_encounter, 
-                // move it to the actual encounter ID
-                if ($key === 'pending_new_encounter' && $mode == 'new') {
-                    $_SESSION['pending_ai_transcriptions'][$encounter] = $_SESSION['pending_ai_transcriptions'][$key];
-                    error_log("Moved transcription from pending_new_encounter to encounter $encounter");
-                }
-                
-                try {
-                    // Create the AI summary
-                    error_log("Creating AI summary for encounter $encounter with UUID " . ($encounterUuid ? bin2hex($encounterUuid) : 'NULL'));
-                    $summaryResult = $aiSummaryService->createFromSessionData($encounter, $encounterUuid, $pid);
-                    
-                    if ($summaryResult && isset($summaryResult['form_id'])) {
-                        error_log("AI Summary created successfully with form ID: " . $summaryResult['form_id']);
-                        error_log("=== AI SUMMARY CREATION SUCCESS ===");
-                        
-                        // Clean up the session
-                        unset($_SESSION['pending_ai_transcriptions']['pending_new_encounter']);
-                        unset($_SESSION['pending_ai_transcriptions'][$encounter]);
-                        error_log("Cleaned up session data for encounter $encounter");
-                        
-                        // Success - break out of the loop
-                        break;
-                    } else {
-                        error_log("ERROR: AI summary creation returned invalid result: " . print_r($summaryResult, true));
+                error_log("Successfully updated blank AI Summary form ID: " . $blankForm['id'] . " for encounter: " . $encounter);
+            } else {
+                error_log("WARNING: No blank AI Summary form found to update for encounter: " . $encounter);
+            }
+
+            // Clear the session data now that it has been processed
+            unset($_SESSION['pending_ai_transcriptions'][$sessionKey]);
+            error_log("Cleared pending transcription from session for key: " . $sessionKey);
+            
+            // SURGICAL FIX: Clear any orphaned transcription data that doesn't match current context
+            // This prevents stale transcription data from appearing in wrong encounters/patients
+            if (!empty($_SESSION['pending_ai_transcriptions'])) {
+                foreach ($_SESSION['pending_ai_transcriptions'] as $key => $data) {
+                    // Remove transcriptions that don't belong to current patient or are too old (>1 hour)
+                    if ($data['pid'] !== $pid || (time() - $data['timestamp']) > 3600) {
+                        unset($_SESSION['pending_ai_transcriptions'][$key]);
+                        error_log("Removed stale transcription for key: $key (wrong patient or too old)");
                     }
-                } catch (Exception $e) {
-                    error_log("ERROR creating AI summary: " . $e->getMessage());
-                    error_log("Stack trace: " . $e->getTraceAsString());
-                    // Continue to next key
                 }
+            }
+        } else {
+            error_log("No matching pending transcription found for session key: " . $sessionKey);
+            // ADDITIONAL CLEANUP: If no matching transcription was found, clear any leftover
+            // pending_ai_transcriptions to prevent stale data from leaking into future encounters.
+            if (!empty($_SESSION['pending_ai_transcriptions'])) {
+                error_log("Clearing all pending_ai_transcriptions because none matched the current session key.");
+                $_SESSION['pending_ai_transcriptions'] = [];
             }
         }
     } catch (Exception $e) {
-        error_log("ERROR creating AI summary: " . $e->getMessage());
-        error_log("Stack trace: " . $e->getTraceAsString());
+        error_log("ERROR updating AI summary from session: " . $e->getMessage());
     }
 } else {
     error_log("No pending AI transcriptions found in session");

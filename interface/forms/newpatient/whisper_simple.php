@@ -137,14 +137,19 @@ function saveTranscriptionToSession($transcription) {
         throw new Exception('Missing patient information in session');
     }
     
-    // Clear any pending transcriptions for the current patient to avoid using stale data.
-    if (!isset($_SESSION['pending_ai_transcriptions'])) {
-        $_SESSION['pending_ai_transcriptions'] = [];
-    }
-    foreach ($_SESSION['pending_ai_transcriptions'] as $key => $pending) {
-        if (isset($pending['pid']) && $pending['pid'] == $_SESSION['pid']) {
-            unset($_SESSION['pending_ai_transcriptions'][$key]);
+    // SURGICAL FIX: Clear any stale transcriptions to prevent cross-contamination
+    // Only clear transcriptions that don't belong to current patient or are too old
+    if (!empty($_SESSION['pending_ai_transcriptions'])) {
+        $currentPid = $_SESSION['pid'];
+        foreach ($_SESSION['pending_ai_transcriptions'] as $key => $data) {
+            // Remove transcriptions that don't belong to current patient or are too old (>1 hour)
+            if ($data['pid'] !== $currentPid || (time() - $data['timestamp']) > 3600) {
+                unset($_SESSION['pending_ai_transcriptions'][$key]);
+                error_log("Cleared stale transcription for key: $key (wrong patient or too old)");
+            }
         }
+    } else {
+        $_SESSION['pending_ai_transcriptions'] = [];
     }
     
     // For new encounters, use a special key that will be processed on save
