@@ -1,6 +1,6 @@
 <?php
 /**
- * Simple OpenAI Whisper Integration - MVP Version
+ * Simple OpenAI Whisper Integration - MVP Version with UUID-Based Transcription System
  * 
  * @package   OpenEMR
  * @link      http://www.open-emr.org
@@ -8,21 +8,57 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+// Early debug logging using same format as generate_summary.php
+$timestamp = date('Y-m-d H:i:s');
+error_log("[$timestamp] [whisper_simple.php] === WHISPER ENDPOINT ACCESS ===\n", 3, "/tmp/ai_summary.log");
+error_log("[$timestamp] [whisper_simple.php] Method: " . ($_SERVER['REQUEST_METHOD'] ?? 'unknown') . ", IP: " . ($_SERVER['REMOTE_ADDR'] ?? 'unknown') . "\n", 3, "/tmp/ai_summary.log");
+error_log("[$timestamp] [whisper_simple.php] POST data keys: " . implode(', ', array_keys($_POST)) . "\n", 3, "/tmp/ai_summary.log");
+error_log("[$timestamp] [whisper_simple.php] FILES uploaded: " . (isset($_FILES['audio']) ? 'YES' : 'NO') . "\n", 3, "/tmp/ai_summary.log");
+
 // Enable session writes for this script
 $sessionAllowWrite = true;
 
-require_once(__DIR__ . "/../../globals.php");
-require_once("$srcdir/forms.inc.php");
+try {
+    require_once(__DIR__ . "/../../globals.php");
+    require_once("$srcdir/forms.inc.php");
+    error_log("[$timestamp] [whisper_simple.php] OpenEMR includes loaded successfully\n", 3, "/tmp/ai_summary.log");
+} catch (Exception $e) {
+    error_log("[$timestamp] [whisper_simple.php] ERROR: Failed to load OpenEMR includes: " . $e->getMessage() . "\n", 3, "/tmp/ai_summary.log");
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Failed to load OpenEMR includes: ' . $e->getMessage()]);
+    exit;
+}
 
 use OpenEMR\Common\Csrf\CsrfUtils;
 use OpenEMR\Common\Logging\SystemLogger;
+use Ramsey\Uuid\Uuid;
 
 header('Content-Type: application/json');
 
+// Custom logging function for whisper transcription debugging (same as generate_summary.php)
+function whisper_log($message) {
+    $timestamp = date('Y-m-d H:i:s');
+    error_log("[$timestamp] [whisper_simple.php] $message\n", 3, "/tmp/ai_summary.log");
+    error_log("WHISPER: $message"); // Also log to default error log
+}
+
+whisper_log('Whisper transcription service started - Session ID: ' . session_id() . ', User: ' . ($_SESSION['authUser'] ?? 'unknown') . ', Patient ID: ' . ($_SESSION['pid'] ?? 'none'));
+
+// Log CSRF token debugging info
+$submittedToken = $_POST["csrf_token_form"] ?? 'NOT_PROVIDED';
+whisper_log('CSRF token received: ' . (empty($submittedToken) ? 'EMPTY' : 'PROVIDED (length: ' . strlen($submittedToken) . ')'));
+
 // Verify CSRF token
 if (!CsrfUtils::verifyCsrfToken($_POST["csrf_token_form"])) {
-    CsrfUtils::csrfNotVerified();
+    whisper_log('CSRF token verification failed');
+    http_response_code(403);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'CSRF token verification failed. Please refresh the page and try again.'
+    ]);
+    exit;
 }
+whisper_log('CSRF token verification successful');
 
 // Check for OpenAI API key in multiple locations
 $apiKey = null;
@@ -38,6 +74,7 @@ if (getenv('OPENAI_API_KEY')) {
 }
 
 if (empty($apiKey)) {
+    whisper_log('OpenAI API key not configured');
     http_response_code(400);
     echo json_encode([
         'success' => false, 
@@ -49,6 +86,7 @@ if (empty($apiKey)) {
 // Check if file was uploaded
 if (!isset($_FILES['audio']) || $_FILES['audio']['error'] !== UPLOAD_ERR_OK) {
     $uploadError = $_FILES['audio']['error'] ?? 'No file uploaded';
+    whisper_log('Audio upload failed: ' . $uploadError);
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => "Audio upload failed: $uploadError"]);
     exit;
@@ -62,58 +100,39 @@ try {
         throw new Exception('Audio file too large (max 25MB)');
     }
     
-    // Log for debugging
-    error_log("Voice recording upload - File: {$audioFile['name']}, Size: {$audioFile['size']}");
+    whisper_log('Processing voice recording upload - File: ' . $audioFile['name'] . ', Size: ' . $audioFile['size'] . ' bytes, Type: ' . $audioFile['type']);
     
     // Call OpenAI Whisper API
     $transcription = transcribeWithWhisper($audioFile['tmp_name'], $audioFile['name'], $apiKey);
     
-    // Save transcription temporarily in session instead of creating AI summary immediately
-    // This ensures the encounter exists before we create the AI summary
-    saveTranscriptionToSession($transcription);
+    whisper_log('Whisper transcription completed - Length: ' . strlen($transcription) . ' chars, Preview: ' . substr($transcription, 0, 100) . '...');
+    
+    // CRITICAL: Generate unique UUID for this transcription to prevent session contamination
+    $transcriptionUuid = Uuid::uuid4()->toString();
+    
+    // Save transcription with UUID-based system
+    $sessionResult = saveTranscriptionToSession($transcription, $transcriptionUuid);
     
     // CRITICAL: Write session data to storage immediately
-    // This ensures the data is available for the next request
     session_write_close();
     
-    // Log for debugging
-    error_log("=== WHISPER_SIMPLE DEBUG ===");
-    error_log("Transcription saved to session");
-    error_log("Session ID: " . session_id());
-    error_log("Encounter key used: " . ($encounterKey ?? 'unknown'));
-    error_log("Session was written and closed to ensure persistence");
-    
-    // Log success
-    if (class_exists('OpenEMR\\Common\\Logging\\SystemLogger')) {
-        (new SystemLogger())->info("Voice transcription completed and stored in session", [
-            'user' => $_SESSION['authUser'] ?? 'unknown',
-            'file_size' => $audioFile['size'],
-            'transcription_length' => strlen($transcription),
-            'session_encounter' => $_SESSION['encounter'] ?? 'none'
-        ]);
-    }
+    whisper_log('Transcription saved to session with UUID: ' . $transcriptionUuid . ', Session ID: ' . session_id());
     
     // Return success response
     echo json_encode([
         'success' => true,
         'transcription' => $transcription,
+        'transcription_uuid' => $transcriptionUuid,
         'message' => 'Transcription saved to session for later processing',
         'debug' => [
             'session_id' => session_id(),
-            'encounter_key' => $encounterKey ?? 'unknown',
+            'transcription_uuid' => $transcriptionUuid,
             'pending_count' => count($_SESSION['pending_ai_transcriptions'] ?? [])
         ]
     ]);
     
 } catch (Exception $e) {
-    // Log error
-    error_log("Voice transcription error: " . $e->getMessage());
-    if (class_exists('OpenEMR\\Common\\Logging\\SystemLogger')) {
-        (new SystemLogger())->error("Voice transcription failed", [
-            'error' => $e->getMessage(),
-            'user' => $_SESSION['authUser'] ?? 'unknown'
-        ]);
-    }
+    whisper_log('Voice transcription failed - Error: ' . $e->getMessage());
     
     http_response_code(500);
     echo json_encode([
@@ -123,57 +142,95 @@ try {
 }
 
 /**
- * Save transcription temporarily to session for later processing
- * This ensures encounter exists before creating AI summary
+ * Save transcription with UUID-based system to prevent session contamination
  *
  * @param string $transcription The transcription text
- * @return void
+ * @param string $transcriptionUuid Unique UUID for this transcription
+ * @return array Session storage result
  */
-function saveTranscriptionToSession($transcription) {
-    // For new encounters, we may not have an encounter ID yet
-    // We'll use a temporary key and update it when the encounter is saved
-    
+function saveTranscriptionToSession($transcription, $transcriptionUuid) {
     if (empty($_SESSION['pid'])) {
         throw new Exception('Missing patient information in session');
     }
     
-    // SURGICAL FIX: Clear any stale transcriptions to prevent cross-contamination
-    // Only clear transcriptions that don't belong to current patient or are too old
-    if (!empty($_SESSION['pending_ai_transcriptions'])) {
-        $currentPid = $_SESSION['pid'];
-        foreach ($_SESSION['pending_ai_transcriptions'] as $key => $data) {
-            // Remove transcriptions that don't belong to current patient or are too old (>1 hour)
-            if ($data['pid'] !== $currentPid || (time() - $data['timestamp']) > 3600) {
-                unset($_SESSION['pending_ai_transcriptions'][$key]);
-                error_log("Cleared stale transcription for key: $key (wrong patient or too old)");
-            }
-        }
-    } else {
+    $currentPid = $_SESSION['pid'];
+    $currentUser = $_SESSION['authUser'] ?? 'unknown';
+    
+    whisper_log('Starting session transcription storage - UUID: ' . $transcriptionUuid . ', Patient ID: ' . $currentPid . ', User: ' . $currentUser);
+    
+    // INTELLIGENT CLEANUP: Only remove transcriptions from different patients or very old ones
+    // Initialize if needed
+    if (!isset($_SESSION['pending_ai_transcriptions'])) {
         $_SESSION['pending_ai_transcriptions'] = [];
+        whisper_log('Initialized empty pending transcriptions array');
     }
     
-    // For new encounters, use a special key that will be processed on save
-    $encounterKey = !empty($_SESSION['encounter']) ? $_SESSION['encounter'] : 'pending_new_encounter';
+    // Clean up transcriptions that don't belong to current patient or are very old (>30 minutes)
+    $cleanupCount = 0;
+    $currentTime = time();
+    if (!empty($_SESSION['pending_ai_transcriptions'])) {
+        foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $data) {
+            $shouldCleanup = false;
+            $reason = '';
+            
+            // Remove if different patient
+            if (isset($data['pid']) && $data['pid'] != $currentPid) {
+                $shouldCleanup = true;
+                $reason = 'different_patient';
+            }
+            // Remove if older than 30 minutes
+            elseif (isset($data['timestamp']) && ($currentTime - $data['timestamp']) > 1800) {
+                $shouldCleanup = true;
+                $reason = 'too_old';
+            }
+            
+            if ($shouldCleanup) {
+                unset($_SESSION['pending_ai_transcriptions'][$uuid]);
+                $cleanupCount++;
+                $ageMinutes = isset($data['timestamp']) ? round(($currentTime - $data['timestamp']) / 60, 1) : 'unknown';
+                whisper_log('Cleaned up transcription - UUID: ' . $uuid . ', Reason: ' . $reason . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Age: ' . $ageMinutes . ' min');
+            }
+        }
+        
+        if ($cleanupCount > 0) {
+            whisper_log('Intelligent cleanup completed - Cleaned: ' . $cleanupCount . ', Remaining: ' . count($_SESSION['pending_ai_transcriptions']) . ', Patient: ' . $currentPid);
+        }
+    }
     
-    // Store with encounter ID as key (or 'pending_new_encounter' for new encounters)
-    $_SESSION['pending_ai_transcriptions'][$encounterKey] = [
+    // Store transcription using UUID as key (completely unique, no collisions possible)
+    $transcriptionData = [
+        'transcription_uuid' => $transcriptionUuid,
         'transcription' => $transcription,
         'timestamp' => time(),
         'model' => 'whisper-1',
-        'pid' => $_SESSION['pid'],
-        'user' => $_SESSION['authUser'] ?? 'unknown',
+        'pid' => $currentPid,
+        'user' => $currentUser,
         'provider' => $_SESSION['authProvider'] ?? 'Default',
         'source' => 'voice_recording',
-        'is_new_encounter' => empty($_SESSION['encounter'])
+        'encounter_context' => $_SESSION['encounter'] ?? null,
+        'is_new_encounter' => empty($_SESSION['encounter']),
+        'session_id' => session_id()
     ];
     
-    error_log("Transcription stored in session for encounter key: " . $encounterKey);
+    // Use UUID as the key - this prevents any possibility of key collisions
+    $_SESSION['pending_ai_transcriptions'][$transcriptionUuid] = $transcriptionData;
+    
+    whisper_log('Transcription stored in session with UUID key: ' . $transcriptionUuid . ', Size: ' . strlen($transcription) . ' chars, New encounter: ' . ($transcriptionData['is_new_encounter'] ? 'yes' : 'no'));
+    
+    return [
+        'transcription_uuid' => $transcriptionUuid,
+        'storage_key' => $transcriptionUuid,
+        'timestamp' => $transcriptionData['timestamp'],
+        'session_id' => session_id()
+    ];
 }
 
 /**
  * Simple function to transcribe audio using OpenAI Whisper API
  */
 function transcribeWithWhisper($audioFilePath, $originalFileName, $apiKey) {
+    whisper_log('Starting Whisper API call - File: ' . basename($audioFilePath) . ', Original: ' . $originalFileName);
+    
     $curl = curl_init();
     
     // Determine the best MIME type for the file
@@ -198,6 +255,8 @@ function transcribeWithWhisper($audioFilePath, $originalFileName, $apiKey) {
             break;
     }
     
+    whisper_log('Whisper API request details - MIME: ' . $mimeType . ', Extension: ' . $extension . ', Model: whisper-1');
+    
     curl_setopt_array($curl, [
         CURLOPT_URL => "https://api.openai.com/v1/audio/transcriptions",
         CURLOPT_RETURNTRANSFER => true,
@@ -213,26 +272,36 @@ function transcribeWithWhisper($audioFilePath, $originalFileName, $apiKey) {
         ]
     ]);
     
+    $startTime = microtime(true);
     $response = curl_exec($curl);
+    $endTime = microtime(true);
     $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
     $error = curl_error($curl);
     curl_close($curl);
     
+    $durationMs = round(($endTime - $startTime) * 1000);
+    whisper_log('Whisper API response received - HTTP: ' . $httpCode . ', Duration: ' . $durationMs . 'ms, Length: ' . strlen($response) . ', Error: ' . (!empty($error) ? 'yes' : 'no'));
+    
     if ($error) {
+        whisper_log('Whisper API network error: ' . $error);
         throw new Exception("Network error: " . $error);
     }
     
     if ($httpCode !== 200) {
         $errorData = json_decode($response, true);
         $errorMessage = $errorData['error']['message'] ?? "HTTP $httpCode error";
+        whisper_log('Whisper API HTTP error - Code: ' . $httpCode . ', Message: ' . $errorMessage);
         throw new Exception("OpenAI API error: " . $errorMessage);
     }
     
     $transcription = trim($response);
     
     if (empty($transcription)) {
+        whisper_log('Empty transcription returned from Whisper');
         throw new Exception("No transcription returned from Whisper");
     }
+    
+    whisper_log('Whisper transcription successful - Length: ' . strlen($transcription) . ' chars, Words: ' . str_word_count($transcription));
     
     return $transcription;
 }

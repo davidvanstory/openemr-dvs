@@ -137,10 +137,12 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             
             mediaRecorder.onstop = async function() {
-                console.log('Recording stopped, processing audio...');
+                console.log('🔥 Recording stopped, processing audio...');
                 const audioBlob = new Blob(audioChunks, { type: mimeType });
-                console.log('Audio blob created:', audioBlob.size, 'bytes, type:', audioBlob.type);
+                console.log('🔥 Audio blob created:', audioBlob.size, 'bytes, type:', audioBlob.type);
+                console.log('🔥 About to call transcribeAudio...');
                 await transcribeAudio(audioBlob);
+                console.log('🔥 transcribeAudio completed');
                 stream.getTracks().forEach(track => track.stop());
             };
             
@@ -223,13 +225,16 @@ document.addEventListener('DOMContentLoaded', function() {
         formData.append('csrf_token_form', document.querySelector('input[name="csrf_token_form"]').value);
         
         try {
-            // Use the correct endpoint: whisper_simple.php
+            // Use the real OpenAI Whisper endpoint with full OpenEMR integration
+            console.log('🔥 MAKING FETCH REQUEST TO:', '{{ webroot }}/interface/forms/newpatient/whisper_simple.php');
+            console.log('🔥 FormData contents:', Array.from(formData.entries()));
+            
             const response = await fetch('{{ webroot }}/interface/forms/newpatient/whisper_simple.php', {
                 method: 'POST',
                 body: formData
             });
             
-            console.log('Transcription response status:', response.status);
+            console.log('🔥 Transcription response status:', response.status);
             
             if (!response.ok) {
                 const errorText = await response.text();

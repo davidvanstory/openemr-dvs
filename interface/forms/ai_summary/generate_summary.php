@@ -22,7 +22,7 @@ header('Content-Type: application/json');
 // Custom logging function for AI Summary debugging
 function ai_log($message) {
     $timestamp = date('Y-m-d H:i:s');
-    error_log("[$timestamp] AI_SUMMARY: $message", 3, "/tmp/ai_summary.log");
+    error_log("[$timestamp] [generate_summary.php] $message\n", 3, "/tmp/ai_summary.log");
     error_log("AI_SUMMARY: $message"); // Also log to default error log
 }
 
@@ -37,7 +37,12 @@ ai_log("Session authUser: " . ($_SESSION['authUser'] ?? 'NOT SET'));
 // Verify CSRF token
 if (!CsrfUtils::verifyCsrfToken($_POST["csrf_token_form"])) {
     ai_log("CSRF token verification failed");
-    CsrfUtils::csrfNotVerified();
+    http_response_code(403);
+    echo json_encode([
+        'success' => false,
+        'error' => 'CSRF token verification failed. Please refresh the page and try again.'
+    ]);
+    exit;
 }
 ai_log("CSRF token verified successfully");
 
