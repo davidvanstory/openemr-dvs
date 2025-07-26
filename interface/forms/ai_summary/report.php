@@ -138,36 +138,86 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     $csrfToken = CsrfUtils::collectCsrfToken();
     echo "<script>
     document.addEventListener('DOMContentLoaded', function() {
+        console.log('=== AI SUMMARY REPORT.PHP JAVASCRIPT LOADED ===');
+        console.log('Form ID: " . attr($id) . "');
+        console.log('CSRF Token: " . attr($csrfToken) . "');
+        
         const generateBtn = document.getElementById('btn_generate_summary_" . attr($id) . "');
         const statusDiv = document.getElementById('summary_status_" . attr($id) . "');
         const summaryDisplay = document.getElementById('summary_display_" . attr($id) . "');
         const summaryContent = document.getElementById('ai_summary_content_" . attr($id) . "');
         
+        console.log('DOM elements found:', {
+            generateBtn: !!generateBtn,
+            statusDiv: !!statusDiv,
+            summaryDisplay: !!summaryDisplay,
+            summaryContent: !!summaryContent
+        });
+        
         if (generateBtn) {
+            console.log('Adding click event listener to Generate Summary button');
             generateBtn.addEventListener('click', async function() {
+                console.log('=== GENERATE SUMMARY BUTTON CLICKED ===');
+                alert('Button clicked! Check terminal for logs.');
                 const formId = this.getAttribute('data-form-id');
+                console.log('Form ID from button:', formId);
                 
                 // Update button state
+                console.log('Updating button state to processing...');
                 generateBtn.disabled = true;
                 generateBtn.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> " . xlt("Generating...") . "';
                 statusDiv.innerHTML = '<div class=\"alert alert-info\">" . xlt("Generating AI summary from transcription, please wait...") . "</div>';
                 
                 try {
+                    console.log('Preparing FormData for API request...');
                     const formData = new FormData();
                     formData.append('form_id', formId);
                     formData.append('csrf_token_form', '" . attr($csrfToken) . "');
                     
-                    const response = await fetch('" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php', {
+                    console.log('FormData prepared:', {
+                        form_id: formId,
+                        csrf_token_form: '" . attr($csrfToken) . "'
+                    });
+                    
+                    const requestUrl = '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php';
+                    console.log('Making fetch request to:', requestUrl);
+                    
+                    const startTime = performance.now();
+                    const response = await fetch(requestUrl, {
                         method: 'POST',
                         body: formData
                     });
+                    const endTime = performance.now();
                     
+                    console.log('Fetch response received:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        ok: response.ok,
+                        duration: Math.round(endTime - startTime) + 'ms'
+                    });
+                    
+                    if (!response.ok) {
+                        console.error('HTTP error response:', response.status, response.statusText);
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    }
+                    
+                    console.log('Parsing JSON response...');
                     const result = await response.json();
+                    console.log('JSON response parsed:', {
+                        success: result.success,
+                        message: result.message,
+                        summaryLength: result.summary ? result.summary.length : 0,
+                        error: result.error || 'none'
+                    });
                     
                     if (result.success) {
+                        console.log('=== AI SUMMARY GENERATION SUCCESS ===');
+                        console.log('Summary preview (first 100 chars):', result.summary.substring(0, 100) + '...');
+                        
                         // Display the generated summary
                         summaryContent.textContent = result.summary;
                         if (summaryDisplay) {
+                            console.log('Showing summary display element');
                             summaryDisplay.classList.remove('d-none');
                         }
                         
@@ -175,26 +225,38 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
                             '<i class=\"fas fa-check-circle\"></i> " . xlt("AI summary generated successfully!") . "' +
                             '</div>';
                         
+                        console.log('Success message displayed, setting auto-hide timer');
                         // Auto-hide success message after 3 seconds
                         setTimeout(() => {
+                            console.log('Hiding success message');
                             statusDiv.innerHTML = '';
                         }, 3000);
                         
                     } else {
+                        console.error('=== API RETURNED ERROR ===');
+                        console.error('Error message:', result.error);
                         throw new Error(result.error || 'Unknown error occurred');
                     }
                     
                 } catch (error) {
-                    console.error('Summary generation error:', error);
+                    console.error('=== GENERATE SUMMARY ERROR ===');
+                    console.error('Error type:', error.constructor.name);
+                    console.error('Error message:', error.message);
+                    console.error('Full error:', error);
+                    
                     statusDiv.innerHTML = '<div class=\"alert alert-danger\">' +
                         '<i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message +
                         '</div>';
                 } finally {
+                    console.log('Resetting button state');
                     // Reset button state
                     generateBtn.disabled = false;
                     generateBtn.innerHTML = '<i class=\"fas fa-magic\"></i> " . xlt("Generate Summary") . "';
+                    console.log('=== GENERATE SUMMARY PROCESS COMPLETE ===');
                 }
             });
+        } else {
+            console.error('Generate Summary button not found in DOM');
         }
     });
     </script>";

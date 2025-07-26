@@ -109,65 +109,136 @@ if ($formid) {
 
     <script>
     document.addEventListener('DOMContentLoaded', function() {
+        console.log('=== AI SUMMARY VIEW.PHP JAVASCRIPT LOADED ===');
+        console.log('Page loaded at:', new Date().toISOString());
+        
         const generateBtn = document.getElementById('btn_generate_summary');
         const statusDiv = document.getElementById('summary_status');
         const summaryDisplay = document.getElementById('summary_display');
         const summaryContent = document.getElementById('ai_summary_content');
         
-        generateBtn.addEventListener('click', async function() {
-            const formId = this.getAttribute('data-form-id');
+        console.log('DOM elements found:', {
+            generateBtn: !!generateBtn,
+            statusDiv: !!statusDiv,
+            summaryDisplay: !!summaryDisplay,
+            summaryContent: !!summaryContent
+        });
+        
+        if (generateBtn) {
+            const formId = generateBtn.getAttribute('data-form-id');
+            console.log('Generate Summary button found with form ID:', formId);
             
-            if (!formId) {
-                alert('<?php echo xlt("Error: No form ID available"); ?>');
-                return;
-            }
-            
-            // Update button state
-            generateBtn.disabled = true;
-            generateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <?php echo xlt("Generating..."); ?>';
-            statusDiv.innerHTML = '<div class="alert alert-info"><?php echo xlt("Generating AI summary, please wait..."); ?></div>';
-            
-            try {
-                const formData = new FormData();
-                formData.append('form_id', formId);
-                formData.append('csrf_token_form', document.querySelector('input[name="csrf_token_form"]')?.value || '<?php echo attr(CsrfUtils::collectCsrfToken()); ?>');
+            generateBtn.addEventListener('click', async function() {
+                console.log('=== GENERATE SUMMARY BUTTON CLICKED (VIEW.PHP) ===');
+                console.log('Timestamp:', new Date().toISOString());
+                alert('Button clicked in view.php! Check terminal for logs.');
                 
-                const response = await fetch('generate_summary.php', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    // Display the generated summary
-                    summaryContent.textContent = result.summary;
-                    summaryDisplay.classList.remove('d-none');
-                    
-                    statusDiv.innerHTML = '<div class="alert alert-success">' +
-                        '<i class="fas fa-check-circle"></i> <?php echo xlt("AI summary generated successfully!"); ?>' +
-                        '</div>';
-                    
-                    // Auto-hide success message after 3 seconds
-                    setTimeout(() => {
-                        statusDiv.innerHTML = '';
-                    }, 3000);
-                    
-                } else {
-                    throw new Error(result.error || 'Unknown error occurred');
+                if (!formId) {
+                    console.error('ERROR: No form ID available');
+                    alert('<?php echo xlt("Error: No form ID available"); ?>');
+                    return;
                 }
                 
-            } catch (error) {
-                console.error('Summary generation error:', error);
-                statusDiv.innerHTML = '<div class="alert alert-danger">' +
-                    '<i class="fas fa-exclamation-triangle"></i> <?php echo xlt("Error:"); ?> ' + error.message +
-                    '</div>';
-            } finally {
-                // Reset button state
-                generateBtn.disabled = false;
-                generateBtn.innerHTML = '<i class="fas fa-magic"></i> <?php echo xlt("Generate Summary"); ?>';
-            }
-        });
+                // Update button state
+                console.log('Updating UI for processing state...');
+                generateBtn.disabled = true;
+                generateBtn.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> <?php echo xlt("Generating..."); ?>';
+                statusDiv.innerHTML = '<div class=\"alert alert-info\"><?php echo xlt("Generating AI summary, please wait..."); ?></div>';
+                
+                try {
+                    console.log('Preparing FormData...');
+                    const formData = new FormData();
+                    formData.append('form_id', formId);
+                    
+                    const csrfToken = document.querySelector('input[name=\"csrf_token_form\"]')?.value || '<?php echo attr(CsrfUtils::collectCsrfToken()); ?>';
+                    formData.append('csrf_token_form', csrfToken);
+                    
+                    console.log('Request data prepared:', {
+                        form_id: formId,
+                        csrf_token_form: csrfToken ? 'present' : 'missing'
+                    });
+                    
+                    const requestUrl = 'generate_summary.php';
+                    console.log('Making request to:', requestUrl);
+                    
+                    const startTime = performance.now();
+                    const response = await fetch(requestUrl, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const endTime = performance.now();
+                    
+                    console.log('Response received:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        ok: response.ok,
+                        duration: Math.round(endTime - startTime) + 'ms',
+                        headers: Object.fromEntries(response.headers.entries())
+                    });
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('HTTP error response body:', errorText);
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    }
+                    
+                    console.log('Parsing JSON response...');
+                    const result = await response.json();
+                    console.log('Parsed response:', {
+                        success: result.success,
+                        message: result.message,
+                        summaryLength: result.summary ? result.summary.length : 0,
+                        formId: result.form_id,
+                        error: result.error || 'none'
+                    });
+                    
+                    if (result.success) {
+                        console.log('=== SUCCESS: AI SUMMARY GENERATED ===');
+                        console.log('Summary preview:', result.summary.substring(0, 150) + '...');
+                        
+                        // Display the generated summary
+                        summaryContent.textContent = result.summary;
+                        summaryDisplay.classList.remove('d-none');
+                        
+                        statusDiv.innerHTML = '<div class=\"alert alert-success\">' +
+                            '<i class=\"fas fa-check-circle\"></i> <?php echo xlt("AI summary generated successfully!"); ?>' +
+                            '</div>';
+                        
+                        console.log('Success UI updated, setting auto-hide timer');
+                        // Auto-hide success message after 3 seconds
+                        setTimeout(() => {
+                            console.log('Auto-hiding success message');
+                            statusDiv.innerHTML = '';
+                        }, 3000);
+                        
+                    } else {
+                        console.error('=== API ERROR ===');
+                        console.error('Server returned error:', result.error);
+                        throw new Error(result.error || 'Unknown error occurred');
+                    }
+                    
+                } catch (error) {
+                    console.error('=== SUMMARY GENERATION FAILED ===');
+                    console.error('Error details:', {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack
+                    });
+                    
+                    statusDiv.innerHTML = '<div class=\"alert alert-danger\">' +
+                        '<i class=\"fas fa-exclamation-triangle\"></i> <?php echo xlt("Error:"); ?> ' + error.message +
+                        '</div>';
+                } finally {
+                    console.log('Resetting button state');
+                    // Reset button state
+                    generateBtn.disabled = false;
+                    generateBtn.innerHTML = '<i class=\"fas fa-magic\"></i> <?php echo xlt("Generate Summary"); ?>';
+                    console.log('=== GENERATE SUMMARY PROCESS COMPLETE ===');
+                }
+            });
+        } else {
+            console.error('ERROR: Generate Summary button not found in DOM');
+        }
     });
     </script>
 </body>
