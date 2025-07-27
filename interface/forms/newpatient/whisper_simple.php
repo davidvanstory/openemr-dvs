@@ -148,7 +148,8 @@ try {
  * @param string $transcriptionUuid Unique UUID for this transcription
  * @return array Session storage result
  */
-function saveTranscriptionToSession($transcription, $transcriptionUuid) {
+function saveTranscriptionToSession($transcription, $transcriptionUuid)
+{
     if (empty($_SESSION['pid'])) {
         throw new Exception('Missing patient information in session');
     }
@@ -158,43 +159,10 @@ function saveTranscriptionToSession($transcription, $transcriptionUuid) {
     
     whisper_log('Starting session transcription storage - UUID: ' . $transcriptionUuid . ', Patient ID: ' . $currentPid . ', User: ' . $currentUser);
     
-    // INTELLIGENT CLEANUP: Only remove transcriptions from different patients or very old ones
-    // Initialize if needed
+    // Initialize the pending transcriptions array if it does not exist
     if (!isset($_SESSION['pending_ai_transcriptions'])) {
         $_SESSION['pending_ai_transcriptions'] = [];
         whisper_log('Initialized empty pending transcriptions array');
-    }
-    
-    // Clean up transcriptions that don't belong to current patient or are very old (>30 minutes)
-    $cleanupCount = 0;
-    $currentTime = time();
-    if (!empty($_SESSION['pending_ai_transcriptions'])) {
-        foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $data) {
-            $shouldCleanup = false;
-            $reason = '';
-            
-            // Remove if different patient
-            if (isset($data['pid']) && $data['pid'] != $currentPid) {
-                $shouldCleanup = true;
-                $reason = 'different_patient';
-            }
-            // Remove if older than 30 minutes
-            elseif (isset($data['timestamp']) && ($currentTime - $data['timestamp']) > 1800) {
-                $shouldCleanup = true;
-                $reason = 'too_old';
-            }
-            
-            if ($shouldCleanup) {
-                unset($_SESSION['pending_ai_transcriptions'][$uuid]);
-                $cleanupCount++;
-                $ageMinutes = isset($data['timestamp']) ? round(($currentTime - $data['timestamp']) / 60, 1) : 'unknown';
-                whisper_log('Cleaned up transcription - UUID: ' . $uuid . ', Reason: ' . $reason . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Age: ' . $ageMinutes . ' min');
-            }
-        }
-        
-        if ($cleanupCount > 0) {
-            whisper_log('Intelligent cleanup completed - Cleaned: ' . $cleanupCount . ', Remaining: ' . count($_SESSION['pending_ai_transcriptions']) . ', Patient: ' . $currentPid);
-        }
     }
     
     // Store transcription using UUID as key (completely unique, no collisions possible)

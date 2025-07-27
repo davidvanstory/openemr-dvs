@@ -14,11 +14,13 @@ CREATE TABLE IF NOT EXISTS `form_ai_summary` (
   `ai_model_used` VARCHAR(50) DEFAULT 'whisper-1',
   `processing_status` ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'completed',
   `transcription_source` VARCHAR(100) DEFAULT 'voice_recording',
+  `transcription_uuid` VARCHAR(36) DEFAULT NULL COMMENT 'UUID of the voice transcription to prevent reuse',
   `created_date` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `last_updated` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `pid_encounter` (`pid`, `encounter`),
   KEY `status_index` (`processing_status`),
   UNIQUE KEY `encounter_unique` (`encounter`),
-  KEY `encounter_uuid_index` (`encounter_uuid`)
+  KEY `encounter_uuid_index` (`encounter_uuid`),
+  KEY `transcription_uuid_index` (`transcription_uuid`)
 ) ENGINE=InnoDB COMMENT='Voice transcriptions and AI summaries for encounters'; 

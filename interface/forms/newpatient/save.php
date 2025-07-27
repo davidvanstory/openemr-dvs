@@ -37,6 +37,7 @@ error_log("Session ID at start: " . session_id());
 error_log("Session status: " . session_status());
 error_log("Pending AI transcriptions at start: " . print_r($_SESSION['pending_ai_transcriptions'] ?? 'NOT SET', true));
 error_log("All session keys: " . implode(', ', array_keys($_SESSION)));
+error_log("FIX APPLIED: Session restart logic removed to prevent marking loss");
 error_log("=== SAVE.PHP SESSION DEBUG END ===");
 
 if (!CsrfUtils::verifyCsrfToken($_POST["csrf_token_form"])) {
@@ -218,45 +219,21 @@ function logTranscriptionProcessing($message) {
 
 logTranscriptionProcessing('Starting transcription processing after encounter save - Mode: ' . $mode . ', Encounter: ' . $encounter . ', Patient: ' . $pid . ', Session: ' . session_id() . ', Transcriptions: ' . count($_SESSION['pending_ai_transcriptions'] ?? []));
 
-// INTELLIGENT CLEANUP: For new encounters, only clean transcriptions that don't belong to current patient or are very old
-if ($mode === 'new' && !empty($_SESSION['pending_ai_transcriptions'])) {
-    $cleanupCount = 0;
-    $currentTime = time();
-    $validTranscriptions = [];
-    
-    logTranscriptionProcessing('Checking transcriptions for intelligent cleanup - Total: ' . count($_SESSION['pending_ai_transcriptions']) . ', Patient: ' . $pid . ', Encounter: ' . $encounter);
-    
+// COMPREHENSIVE SESSION DEBUG: Log exact session state at start
+if (!empty($_SESSION['pending_ai_transcriptions'])) {
+    logTranscriptionProcessing('SESSION_DEBUG: Full session state at encounter start - Encounter: ' . $encounter);
     foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $data) {
-        $shouldCleanup = false;
-        $reason = '';
-        
-        // Remove if different patient
-        if (isset($data['pid']) && $data['pid'] != $pid) {
-            $shouldCleanup = true;
-            $reason = 'different_patient';
-        }
-        // Remove if older than 30 minutes
-        elseif (isset($data['timestamp']) && ($currentTime - $data['timestamp']) > 1800) {
-            $shouldCleanup = true;
-            $reason = 'too_old';
-        }
-        // Keep if belongs to current patient and is recent
-        else {
-            $validTranscriptions[$uuid] = $data;
-            $ageMinutes = isset($data['timestamp']) ? round(($currentTime - $data['timestamp']) / 60, 1) : 'unknown';
-            logTranscriptionProcessing('Keeping valid transcription for current patient - UUID: ' . $uuid . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Age: ' . $ageMinutes . ' min');
-        }
-        
-        if ($shouldCleanup) {
-            unset($_SESSION['pending_ai_transcriptions'][$uuid]);
-            $cleanupCount++;
-            $ageMinutes = isset($data['timestamp']) ? round(($currentTime - $data['timestamp']) / 60, 1) : 'unknown';
-            logTranscriptionProcessing('Cleaned up invalid transcription - UUID: ' . $uuid . ', Reason: ' . $reason . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Age: ' . $ageMinutes . ' min');
-        }
+        $keys = array_keys($data);
+        $usedFor = isset($data['used_for_encounter']) ? $data['used_for_encounter'] : 'NOT_SET';
+        $usedAt = isset($data['used_at']) ? $data['used_at'] : 'NOT_SET';
+        $preview = substr($data['transcription'] ?? '', 0, 30) . '...';
+        logTranscriptionProcessing('SESSION_DEBUG: UUID: ' . $uuid . ', Keys: ' . implode(',', $keys) . ', used_for_encounter: ' . $usedFor . ', used_at: ' . $usedAt . ', Preview: ' . $preview);
     }
-    
-    logTranscriptionProcessing('Intelligent cleanup completed for new encounter - Cleaned: ' . $cleanupCount . ', Valid: ' . count($validTranscriptions) . ', Remaining: ' . count($_SESSION['pending_ai_transcriptions']) . ', Encounter: ' . $encounter);
+} else {
+    logTranscriptionProcessing('SESSION_DEBUG: No transcriptions in session at encounter start - Encounter: ' . $encounter);
 }
+
+// NOTE: Using "mark as used" approach instead of clearing to prevent session issues
 
 // DEBUG: Add visible output
 echo "<script>console.log('=== AI SUMMARY DEBUG ===');</script>";
@@ -267,7 +244,7 @@ $sessionData = $_SESSION['pending_ai_transcriptions'] ?? [];
 echo "<script>console.log('Session transcription count: " . count($sessionData) . "');</script>";
 if (!empty($sessionData)) {
     foreach ($sessionData as $uuid => $data) {
-        echo "<script>console.log('Transcription UUID: " . $uuid . ", PID: " . ($data['pid'] ?? 'unknown') . ", Preview: " . substr($data['transcription'] ?? '', 0, 50) . "...');</script>";
+        echo "<script>console.log('Transcription UUID: " . js_escape($uuid) . ", PID: " . js_escape($data['pid'] ?? 'unknown') . ", Preview: " . js_escape(substr($data['transcription'] ?? '', 0, 50)) . "...');</script>";
     }
 }
 echo "<script>console.log('Session data:', " . json_encode($sessionData) . ");</script>";
@@ -276,130 +253,145 @@ if (!empty($_SESSION['pending_ai_transcriptions'])) {
     logTranscriptionProcessing('Found pending transcriptions in session - Count: ' . count($_SESSION['pending_ai_transcriptions']) . ', Keys: ' . implode(',', array_keys($_SESSION['pending_ai_transcriptions'])) . ', Encounter: ' . $encounter . ', Patient: ' . $pid . ', Mode: ' . $mode);
     
     try {
-        $processedTranscriptions = [];
-        $validTranscription = null;
-        $validTranscriptionUuid = null;
+        $processedRealTranscription = false;
         
-        // CRITICAL: Log all existing transcriptions before processing
-        foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $data) {
-            $preview = substr($data['transcription'] ?? '', 0, 50) . '...';
-            logTranscriptionProcessing('Existing transcription in session - UUID: ' . $uuid . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Current: ' . $pid . ', Preview: ' . $preview . ', Time: ' . ($data['timestamp'] ?? 'unknown'));
-        }
-        
-        // Find valid transcription that belongs to current patient
+        // Find a valid, unused transcription for the current patient
         foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $transcriptionData) {
-            logTranscriptionProcessing('Examining transcription - UUID: ' . $uuid . ', Patient: ' . ($transcriptionData['pid'] ?? 'unknown') . ', Current: ' . $pid . ', User: ' . ($transcriptionData['user'] ?? 'unknown') . ', Time: ' . ($transcriptionData['timestamp'] ?? 'unknown'));
+            logTranscriptionProcessing('Examining transcription - UUID: ' . $uuid . ', Patient: ' . ($transcriptionData['pid'] ?? 'unknown') . ', Current: ' . $pid);
             
+            // CRITICAL: Check if this transcription has already been used by checking the database
+            $usageCheckSql = "SELECT COUNT(*) as count FROM form_ai_summary WHERE transcription_uuid = ?";
+            $usageResult = sqlQuery($usageCheckSql, [$uuid]);
+            if ($usageResult['count'] > 0) {
+                logTranscriptionProcessing('DB_USAGE_CHECK: Transcription already used - UUID: ' . $uuid . ', Skipping...');
+                continue;
+            } else {
+                logTranscriptionProcessing('DB_USAGE_CHECK: Transcription not yet used - UUID: ' . $uuid);
+            }
+
             // Validate that this transcription belongs to the current patient
             if (isset($transcriptionData['pid']) && $transcriptionData['pid'] == $pid) {
-                // Additional validation: check session context if available
-                $isValidForCurrentSession = true;
+                // CRITICAL: Only use transcriptions that are very recent (within 2 minutes)  
+                $transcriptionAge = time() - ($transcriptionData['timestamp'] ?? 0);
+                $ageMinutes = round($transcriptionAge / 60, 1);
                 
-                // For new encounters, any transcription for this patient is valid
-                // For existing encounters, we accept any transcription for this patient 
-                // (since the UUID system prevents cross-contamination)
-                
-                if ($isValidForCurrentSession) {
-                    $validTranscription = $transcriptionData;
-                    $validTranscriptionUuid = $uuid;
-                    $preview = substr($transcriptionData['transcription'] ?? '', 0, 50) . '...';
-                    logTranscriptionProcessing('Found valid transcription for current patient - UUID: ' . $uuid . ', Patient: ' . $pid . ', Length: ' . strlen($transcriptionData['transcription'] ?? '') . ', Preview: ' . $preview);
-                    break; // Use the first valid transcription found
+                if ($transcriptionAge > 120) { // 2 minutes
+                    logTranscriptionProcessing('Transcription too old for use - UUID: ' . $uuid . ', Age: ' . $ageMinutes . ' min, Limit: 2 min');
+                    continue;
                 }
+                
+                logTranscriptionProcessing('Transcription age check passed - UUID: ' . $uuid . ', Age: ' . $ageMinutes . ' min');
+                
+                $preview = substr($transcriptionData['transcription'] ?? '', 0, 50) . '...';
+                logTranscriptionProcessing('Found valid transcription for current patient - UUID: ' . $uuid . ', Patient: ' . $pid . ', Length: ' . strlen($transcriptionData['transcription'] ?? '') . ', Preview: ' . $preview . ', Age: ' . $ageMinutes . ' min');
+                
+                // Now, process this valid transcription
+                logTranscriptionProcessing('Processing valid transcription for encounter update - UUID: ' . $uuid . ', Encounter: ' . $encounter . ', Patient: ' . $pid);
+
+                // Find the most recent blank form ID for this encounter to update
+                $findBlankFormSql = "SELECT id FROM form_ai_summary " .
+                                   "WHERE encounter = ? AND pid = ? " .
+                                   "AND processing_status = 'pending' " .
+                                   "AND (voice_transcription = '' OR voice_transcription IS NULL) " .
+                                   "ORDER BY id DESC LIMIT 1";
+                
+                $blankForm = sqlQuery($findBlankFormSql, [$encounter, $pid]);
+                
+                if ($blankForm && !empty($blankForm['id'])) {
+                    logTranscriptionProcessing('Found blank AI Summary form to update - Form ID: ' . $blankForm['id'] . ', Encounter: ' . $encounter);
+                    
+                    // Update the form and crucially, set the transcription_uuid to mark it as used
+                    $updateSql = "UPDATE form_ai_summary SET " .
+                                    "voice_transcription = ?, " .
+                                    "transcription_uuid = ?, " . // <-- The permanent usage flag
+                                    "processing_status = 'completed', " .
+                                    "ai_model_used = ?, " .
+                                    "transcription_source = ?, " .
+                                    "user = ?, " .
+                                    "groupname = ? " .
+                                  "WHERE id = ?";
+
+                    sqlStatement($updateSql, [
+                        $transcriptionData['transcription'],
+                        $uuid, // Set the UUID to mark as used
+                        $transcriptionData['model'] ?? 'whisper-1',
+                        $transcriptionData['source'] ?? 'voice_recording',
+                        $transcriptionData['user'],
+                        $transcriptionData['provider'] ?? 'Default',
+                        $blankForm['id']
+                    ]);
+                    
+                    logTranscriptionProcessing('Successfully updated AI Summary form with transcription - Form ID: ' . $blankForm['id'] . ', Encounter: ' . $encounter . ', UUID: ' . $uuid . ', Length: ' . strlen($transcriptionData['transcription']));
+                    
+                    $processedRealTranscription = true;
+                } else {
+                    logTranscriptionProcessing('No blank AI Summary form found to update - Encounter: ' . $encounter . ', Patient: ' . $pid);
+                }
+
+                // Break after processing the first valid transcription
+                break;
             } else {
                 logTranscriptionProcessing('Transcription belongs to different patient - UUID: ' . $uuid . ', Patient: ' . ($transcriptionData['pid'] ?? 'unknown') . ', Current: ' . $pid);
             }
         }
         
-        if ($validTranscription && $validTranscriptionUuid) {
-            logTranscriptionProcessing('Processing valid transcription for encounter update - UUID: ' . $validTranscriptionUuid . ', Encounter: ' . $encounter . ', Patient: ' . $pid);
-            
-            // SURGICAL FIX: Find the most recent blank form ID first, then update it specifically
-            $findBlankFormSql = "SELECT id FROM form_ai_summary " .
-                               "WHERE encounter = ? AND pid = ? " .
-                               "AND processing_status = 'pending' " .
-                               "AND (voice_transcription = '' OR voice_transcription IS NULL) " .
-                               "ORDER BY id DESC LIMIT 1";
-            
-            $blankForm = sqlQuery($findBlankFormSql, [$encounter, $pid]);
-            
-            if ($blankForm && !empty($blankForm['id'])) {
-                logTranscriptionProcessing('Found blank AI Summary form to update - Form ID: ' . $blankForm['id'] . ', Encounter: ' . $encounter);
-                
-                $updateSql = "UPDATE form_ai_summary SET " .
-                                "voice_transcription = ?, " .
-                                "processing_status = 'completed', " .
-                                "ai_model_used = ?, " .
-                                "transcription_source = ?, " .
-                                "user = ?, " .
-                                "groupname = ? " .
-                              "WHERE id = ?";
-
-                $updateResult = sqlStatement($updateSql, [
-                    $validTranscription['transcription'],
-                    $validTranscription['model'] ?? 'whisper-1',
-                    $validTranscription['source'] ?? 'voice_recording',
-                    $validTranscription['user'],
-                    $validTranscription['provider'] ?? 'Default',
-                    $blankForm['id']
-                ]);
-                
-                logTranscriptionProcessing('Successfully updated AI Summary form with transcription - Form ID: ' . $blankForm['id'] . ', Encounter: ' . $encounter . ', UUID: ' . $validTranscriptionUuid . ', Length: ' . strlen($validTranscription['transcription']));
-                
-                // Mark this transcription as processed
-                $processedTranscriptions[] = $validTranscriptionUuid;
-                
-            } else {
-                logTranscriptionProcessing('No blank AI Summary form found to update - Encounter: ' . $encounter . ', Patient: ' . $pid);
-            }
-            
-            // CRITICAL: Clear the processed transcription from session immediately
-            unset($_SESSION['pending_ai_transcriptions'][$validTranscriptionUuid]);
-            logTranscriptionProcessing('Cleared processed transcription from session - UUID: ' . $validTranscriptionUuid . ', Remaining: ' . count($_SESSION['pending_ai_transcriptions']));
-            
-        } else {
-            logTranscriptionProcessing('No valid transcription found for current patient - Patient: ' . $pid . ', Available: ' . count($_SESSION['pending_ai_transcriptions']));
+        if (!($processedRealTranscription ?? false)) {
+            logTranscriptionProcessing('No valid, unused transcription found for current patient - Patient: ' . $pid . ', Available: ' . count($_SESSION['pending_ai_transcriptions']));
         }
-        
-        // ENHANCED CLEANUP: Remove any transcriptions that don't belong to current patient
-        // OR any transcriptions that are older than 10 minutes (more aggressive cleanup)
-        $cleanupCount = 0;
-        $currentTime = time();
-        foreach ($_SESSION['pending_ai_transcriptions'] as $uuid => $data) {
-            $shouldCleanup = false;
-            $reason = '';
-            
-            // Clean up if different patient
-            if (!isset($data['pid']) || $data['pid'] !== $pid) {
-                $shouldCleanup = true;
-                $reason = 'different_patient';
-            }
-            // Clean up if older than 10 minutes (more aggressive than 1 hour)
-            elseif (isset($data['timestamp']) && ($currentTime - $data['timestamp']) > 600) {
-                $shouldCleanup = true;
-                $reason = 'too_old';
-            }
-            
-            if ($shouldCleanup) {
-                unset($_SESSION['pending_ai_transcriptions'][$uuid]);
-                $cleanupCount++;
-                $ageMinutes = isset($data['timestamp']) ? round(($currentTime - $data['timestamp']) / 60, 1) : 'unknown';
-                logTranscriptionProcessing('Cleaned up transcription - UUID: ' . $uuid . ', Reason: ' . $reason . ', Patient: ' . ($data['pid'] ?? 'unknown') . ', Age: ' . $ageMinutes . ' min');
-            }
-        }
-        
-        if ($cleanupCount > 0) {
-            logTranscriptionProcessing('Session cleanup completed - Cleaned: ' . $cleanupCount . ', Remaining: ' . count($_SESSION['pending_ai_transcriptions']));
-        }
-        
-        // FINAL SAFETY: Log final session state
-        logTranscriptionProcessing('Final session state after processing - Count: ' . count($_SESSION['pending_ai_transcriptions']) . ', UUIDs: ' . implode(',', array_keys($_SESSION['pending_ai_transcriptions'])) . ', Encounter: ' . $encounter . ', Patient: ' . $pid);
         
     } catch (Exception $e) {
         logTranscriptionProcessing('Error processing transcription from session - Error: ' . $e->getMessage() . ', Encounter: ' . $encounter . ', Patient: ' . $pid);
     }
 } else {
     logTranscriptionProcessing('No pending AI transcriptions found in session - Encounter: ' . $encounter . ', Patient: ' . $pid);
+    $processedRealTranscription = false;
+}
+
+// FALLBACK: Only use DrVisit.md for new encounters that had NO real voice transcription
+if ($mode === 'new' && !($processedRealTranscription ?? false)) {
+    logTranscriptionProcessing('New encounter with no real transcription processed - checking for blank AI Summary form to populate with DrVisit.md fallback');
+    
+    // Find the blank AI Summary form created for this encounter
+    $findBlankFormSql = "SELECT id FROM form_ai_summary " .
+                       "WHERE encounter = ? AND pid = ? " .
+                       "AND processing_status = 'pending' " .
+                       "AND (voice_transcription = '' OR voice_transcription IS NULL) " .
+                       "ORDER BY id DESC LIMIT 1";
+    
+    $blankForm = sqlQuery($findBlankFormSql, [$encounter, $pid]);
+    
+    if ($blankForm && !empty($blankForm['id'])) {
+        // Check for DrVisit.md fallback content
+        $drVisitPath = $GLOBALS['fileroot'] . '/_docs/DrVisit.md';
+        if (file_exists($drVisitPath)) {
+            $drVisitContent = file_get_contents($drVisitPath);
+            logTranscriptionProcessing('Using DrVisit.md fallback for new encounter with no real transcription - Form ID: ' . $blankForm['id'] . ', Content length: ' . strlen($drVisitContent));
+            
+            $updateSql = "UPDATE form_ai_summary SET " .
+                            "voice_transcription = ?, " .
+                            "processing_status = 'completed', " .
+                            "ai_model_used = ?, " .
+                            "transcription_source = ?, " .
+                            "user = ?, " .
+                            "groupname = ? " .
+                          "WHERE id = ?";
+
+            $updateResult = sqlStatement($updateSql, [
+                $drVisitContent,
+                'fallback',
+                'drvisit_markdown',
+                $_SESSION['authUser'],
+                $_SESSION['authProvider'] ?? 'Default',
+                $blankForm['id']
+            ]);
+            
+            logTranscriptionProcessing('Successfully updated AI Summary form with DrVisit.md fallback - Form ID: ' . $blankForm['id'] . ', Encounter: ' . $encounter);
+        } else {
+            logTranscriptionProcessing('DrVisit.md fallback file not found at: ' . $drVisitPath);
+        }
+    } else {
+        logTranscriptionProcessing('No blank AI Summary form found for DrVisit.md fallback - Encounter: ' . $encounter . ', Patient: ' . $pid);
+    }
 }
 
 // Update the list of issues associated with this encounter.
