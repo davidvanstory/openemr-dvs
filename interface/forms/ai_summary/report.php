@@ -77,7 +77,7 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     echo "  <div class='card-header bg-primary text-white'><h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5></div>";
     echo "  <div class='card-body d-flex align-items-center'>";
     // Button for generating summary - always visible so users can regenerate
-    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "'>";
+    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "' onclick=\"console.log('INLINE ONCLICK FIRED for button " . attr($id) . "'); console.log('About to call handleApiCall...'); handleApiCall_" . attr($id) . "(this); return false;\">";
     echo "      <i class='fas fa-magic'></i> " . xlt($hasSummary ? "Regenerate Summary" : "Generate Summary");
     echo "    </button>";
     // Button for linking evidence - show if there's a summary
@@ -120,17 +120,119 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     echo "</div>"; // end .row
 
     echo "</div>"; // end .ai-summary-report
+    
+    // BASIC JAVASCRIPT TEST - Log that we got this far
+    echo "<script>console.log('BASIC TEST: JavaScript is executing in report.php for form ID " . $id . "');</script>";
 
-    // --- JavaScript for Linking & Generation ---
+    // CREATE GLOBAL FUNCTION FIRST - Separate script tag to ensure it gets created
     $csrfToken = CsrfUtils::collectCsrfToken();
     echo "<script>
+    console.log('=== CREATING GLOBAL FUNCTION FOR FORM " . $id . " ===');
+    
+    // Create the global function
+    window.handleApiCall_" . $id . " = function(button) {
+        console.log('=== GLOBAL HANDLEAPICALL FUNCTION CALLED ===');
+        console.log('Button:', button);
+        const formId = " . json_encode($id) . ";
+        const statusDiv = document.getElementById('summary_status_' + formId);
+        
+        console.log('FormId:', formId);
+        console.log('StatusDiv:', statusDiv);
+        
+        // Update button state
+        console.log('Making test API call...');
+        button.disabled = true;
+        button.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> Generating...';
+        if (statusDiv) {
+            statusDiv.innerHTML = '<div class=\"alert alert-info\">Generating AI summary, please wait...</div>';
+        }
+        
+        // Prepare form data
+        const formData = new FormData();
+        formData.append('form_id', formId);
+        formData.append('csrf_token_form', '" . $csrfToken . "');
+        
+        console.log('FormData prepared:', { form_id: formId, csrf_token: '" . $csrfToken . "' });
+        
+        // Make API call
+        fetch('" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            console.log('Response received:', response.status, response.statusText);
+            return response.text();
+        })
+        .then(text => {
+            console.log('Response text:', text);
+            try {
+                const result = JSON.parse(text);
+                console.log('Parsed JSON:', result);
+                if (result.success) {
+                    if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-success\">Summary generated successfully!</div>';
+                    setTimeout(() => {
+                        if (window.parent && window.parent.refreshVisitDisplay) {
+                            window.parent.refreshVisitDisplay();
+                        } else {
+                            location.reload();
+                        }
+                    }, 1500);
+                } else {
+                    throw new Error(result.error || 'Unknown error');
+                }
+            } catch (e) {
+                console.error('JSON parse error:', e);
+                if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-danger\">Error: ' + e.message + '</div>';
+            }
+        })
+        .catch(error => {
+            console.error('Fetch error:', error);
+            if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-danger\">Error: ' + error.message + '</div>';
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = '<i class=\"fas fa-magic\"></i> Generate Summary';
+        });
+    };
+    
+    console.log('Global function handleApiCall_" . $id . " created successfully');
+    console.log('Function type:', typeof window.handleApiCall_" . $id . ");
+    </script>";
+
+    // --- JavaScript for Linking & Generation ---
+    echo "<script>
+    // IMMEDIATE LOGS - these should appear as soon as script tag is processed
+    console.log('=== AI SUMMARY JAVASCRIPT LOADING ===');
+    console.log('Script tag is executing for form ID: " . json_encode($id) . "');
+    console.log('Current timestamp:', new Date().toISOString());
+    console.log('Document ready state:', document.readyState);
+    
+    // Test if we can access the button immediately
+    console.log('Trying to find button immediately...');
+    var immediateBtn = document.getElementById('btn_generate_summary_" . $id . "');
+    console.log('Button found immediately:', immediateBtn);
+    
+    // Function already created in separate script tag above
+    console.log('Checking if global function exists:', typeof window.handleApiCall_" . $id . ");
+    
     document.addEventListener('DOMContentLoaded', function() {
+        console.log('=== DOM CONTENT LOADED EVENT FIRED ===');
         console.log('Linked_Evidence: Initializing for form_id " . json_encode($id) . "');
         const formId = " . json_encode($id) . ";
+        console.log('Linked_Evidence: formId variable set to:', formId);
+        
+        console.log('Linked_Evidence: Looking for button with ID: btn_generate_summary_' + formId);
         const generateBtn = document.getElementById('btn_generate_summary_' + formId);
+        console.log('Linked_Evidence: Generate button element:', generateBtn);
+        
         const linkBtn = document.getElementById('btn_link_evidence_' + formId);
+        console.log('Linked_Evidence: Link button element:', linkBtn);
+        
         const statusDiv = document.getElementById('summary_status_' + formId);
+        console.log('Linked_Evidence: Status div element:', statusDiv);
+        
         const summaryContainer = document.getElementById('summary-display-' + formId);
+        console.log('Linked_Evidence: Summary container element:', summaryContainer);
         
         let linkingMapData = " . ($linkingMapJson ? $linkingMapJson : 'null') . ";
         let linkingMap = linkingMapData ? linkingMapData.linking_map : null;
@@ -170,7 +272,11 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
         }
 
         async function handleApiCall(button, url, statusMessage) {
-            console.log(`Linked_Evidence: Button #${button.id} clicked.`);
+            console.log(`Linked_Evidence: Button #${button.id} clicked, calling handleApiCall`);
+            console.log('Linked_Evidence: URL:', url);
+            console.log('Linked_Evidence: FormId:', formId);
+            console.log('Linked_Evidence: CSRF Token:', " . json_encode($csrfToken) . ");
+            
             button.disabled = true;
             button.innerHTML = `<i class=\"fas fa-spinner fa-spin\"></i> ${statusMessage}`;
             statusDiv.innerHTML = `<div class=\"alert alert-info\">${statusMessage}...</div>`;
@@ -179,14 +285,32 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
                 const formData = new FormData();
                 formData.append('form_id', formId);
                 formData.append('csrf_token_form', " . json_encode($csrfToken) . ");
-                console.log('Linked_Evidence: Sending AJAX request to ' + url, { formId: formId });
+                
+                console.log('Linked_Evidence: FormData contents:');
+                for (let [key, value] of formData.entries()) {
+                    console.log('  ' + key + ':', value);
+                }
+                
+                console.log('Linked_Evidence: Sending AJAX request to ' + url);
+                const startTime = performance.now();
                 
                 const response = await fetch(url, { method: 'POST', body: formData });
-                console.log('Linked_Evidence: Received response.', { status: response.status, ok: response.ok });
+                const endTime = performance.now();
+                
+                console.log('Linked_Evidence: Response received in ' + Math.round(endTime - startTime) + 'ms');
+                console.log('Linked_Evidence: Response details:', { 
+                    status: response.status, 
+                    statusText: response.statusText,
+                    ok: response.ok,
+                    headers: Object.fromEntries(response.headers.entries())
+                });
                 
                 if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + response.statusText);
                 
-                const result = await response.json();
+                const responseText = await response.text();
+                console.log('Linked_Evidence: Raw response text:', responseText);
+                
+                const result = JSON.parse(responseText);
                 console.log('Linked_Evidence: Parsed JSON response.', result);
 
                 if (result.success) {
@@ -196,21 +320,49 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
                 } else {
                     throw new Error(result.error || 'Unknown error occurred');
                 }
-            } catch (error) {
-                console.error('Linked_Evidence: API call failed.', { message: error.message });
-                statusDiv.innerHTML = `<div class=\"alert alert-danger\"><i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message + '</div>';
-                button.disabled = false;
-                button.innerHTML = button.dataset.originalHtml; // Restore original button text
-            }
+                            } catch (error) {
+                    console.error('Linked_Evidence: API call failed.');
+                    console.error('Linked_Evidence: Error type:', error.constructor.name);
+                    console.error('Linked_Evidence: Error message:', error.message);
+                    console.error('Linked_Evidence: Full error object:', error);
+                    if (error.stack) {
+                        console.error('Linked_Evidence: Error stack:', error.stack);
+                    }
+                    
+                    statusDiv.innerHTML = `<div class=\"alert alert-danger\"><i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message + '</div>';
+                    button.disabled = false;
+                    button.innerHTML = button.dataset.originalHtml; // Restore original button text
+                }
         }
 
         if (generateBtn) {
+            console.log('Linked_Evidence: Generate Summary button found, adding click listener');
             generateBtn.dataset.originalHtml = generateBtn.innerHTML;
-            generateBtn.addEventListener('click', () => handleApiCall(
-                generateBtn,
-                '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php',
-                '" . xlt("Generating Summary") . "'
-            ));
+            
+            // Add a simple click test first
+            generateBtn.onclick = function(e) {
+                console.log('=== BUTTON CLICKED (onclick) ===');
+                console.log('Button element:', this);
+                console.log('Event object:', e);
+                alert('Button clicked! Check console for logs.');
+                e.preventDefault();
+            };
+            
+            generateBtn.addEventListener('click', (e) => {
+                console.log('=== BUTTON CLICKED (addEventListener) ===');
+                console.log('Linked_Evidence: Generate Summary button clicked!');
+                e.preventDefault();
+                handleApiCall(
+                    generateBtn,
+                    '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php',
+                    '" . xlt("Generating Summary") . "'
+                );
+            });
+        } else {
+            console.error('Linked_Evidence: Generate Summary button NOT found in DOM');
+            console.error('Linked_Evidence: Available elements with generate_summary in ID:');
+            const allElements = document.querySelectorAll('[id*=\"generate_summary\"]');
+            console.error('Found elements:', allElements);
         }
 
         if (linkBtn) {
@@ -236,6 +388,9 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     
     // Log that the function completed successfully
     error_log("AI_SUMMARY_REPORT: Function completed successfully for form ID {$id}", 3, "/tmp/ai_summary.log");
+    
+    // Add a simple HTML comment to verify the function ran to completion
+    echo "<!-- AI_SUMMARY_REPORT: Function completed for form ID {$id} -->";
 }
 
 // Log that the function was defined
