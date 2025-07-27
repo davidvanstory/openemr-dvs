@@ -9,13 +9,22 @@
  * @license   https://github.com/openemr/openemr/blob/master/LICENSE GNU General Public License 3
  */
 
+// Log that the report.php file is being included
+error_log("AI_SUMMARY_REPORT_FILE: report.php is being included", 3, "/tmp/ai_summary.log");
+
 require_once(__DIR__ . "/../../globals.php");
+// Temporarily commenting out TextUtil to debug loading issue
+// require_once($GLOBALS['srcdir'] . "/Common/Utils/TextUtil.php");
 
 use OpenEMR\Common\Uuid\UuidRegistry;
 use OpenEMR\Common\Csrf\CsrfUtils;
+// use OpenEMR\Common\Utils\TextUtil;
+
+// Log after includes are loaded
+error_log("AI_SUMMARY_REPORT_FILE: All includes loaded, defining ai_summary_report function", 3, "/tmp/ai_summary.log");
 
 /**
- * Display AI Summary form data in encounter summary
+ * Display AI Summary form data in encounter summary, now with interactive linking.
  *
  * @param int $pid Patient ID
  * @param int $encounter Encounter ID  
@@ -25,266 +34,209 @@ use OpenEMR\Common\Csrf\CsrfUtils;
  */
 function ai_summary_report($pid, $encounter, $cols, $id): void
 {
-    // Fetch the AI summary data with encounter information
+    // Debug: Log that the function is being called
+    error_log("AI_SUMMARY_REPORT: Function called with pid=$pid, encounter=$encounter, id=$id", 3, "/tmp/ai_summary.log");
+    
+    // Fetch all necessary data in one query
     $res = sqlQuery(
-        "SELECT ais.*, 
-                fe.date as encounter_date,
-                fe.reason as encounter_reason,
-                fe.uuid as current_encounter_uuid
-         FROM form_ai_summary ais
-         LEFT JOIN form_encounter fe ON fe.uuid = ais.encounter_uuid
-         WHERE ais.id = ? AND ais.pid = ? AND ais.encounter = ?", 
+        "SELECT * FROM form_ai_summary WHERE id = ? AND pid = ? AND encounter = ?",
         array($id, $pid, $encounter)
     );
     
+    error_log("AI_SUMMARY_REPORT: Query result: " . ($res ? "Found data" : "No data found"), 3, "/tmp/ai_summary.log");
+
     if (!$res) {
-        echo "<div class='ai-summary-report'>";
-        echo "<p class='text-muted'>" . xlt("No AI summary data found.") . "</p>";
-        echo "</div>";
+        echo "<div class='ai-summary-report'><p class='text-muted'>" . xlt("No AI summary data found.") . "</p></div>";
         return;
     }
+
+    $transcript = $res['voice_transcription'] ?? '';
+    $summary = $res['ai_summary'] ?? '';
+    $linkingMapJson = $res['linking_map_json'] ?? null;
     
-    echo "<div class='ai-summary-report border rounded p-3 mb-3'>";
-    echo "<h5 class='text-primary mb-3'>" . xlt("Voice Transcription") . "</h5>";
+    // More robust checking for summary and linking state
+    $hasSummary = !empty(trim($summary));
+    $hasLinkingMap = false;
     
-    // Display voice transcription if available
-    if (!empty($res['voice_transcription'])) {
-        echo "<div class='transcription-content mb-3'>";
-        echo "<h6 class='text-secondary'>" . xlt("Transcribed Text:") . "</h6>";
-        echo "<div class='border-left border-primary pl-3'>";
-        echo "<p class='mb-0'>" . text($res['voice_transcription']) . "</p>";
-        echo "</div>";
-        echo "</div>";
-    } else {
-        echo "<div class='alert alert-info mb-3'>";
-        echo "<i class='fas fa-info-circle'></i> " . xlt("No transcription available. Generate Summary will use DrVisit.md for testing.");
-        echo "</div>";
+    if ($linkingMapJson) {
+        $linkingData = json_decode($linkingMapJson, true);
+        $hasLinkingMap = !empty($linkingData['linking_map'] ?? []);
     }
     
-    // AI Scribe Card with Generate Summary button - UPDATED
+    // Log the current state for debugging
+    error_log("AI_SUMMARY_DEBUG: Form ID {$id}, hasSummary: " . ($hasSummary ? 'YES' : 'NO') . ", hasLinkingMap: " . ($hasLinkingMap ? 'YES' : 'NO'), 3, "/tmp/ai_summary.log");
+
+    // Prepare data for rendering using simple string functions (temporarily)
+    $transcriptTurns = !empty($transcript) ? explode("\n", $transcript) : [];
+    $summaryBlocks = !empty($summary) ? explode("\n\n", $summary) : [];
+
+    echo "<div class='ai-summary-report border rounded p-3 mb-3'>";
+
+    // AI Scribe Card with conditional buttons
     echo "<div class='card mb-3 ai-scribe-card'>";
-    echo "  <div class='card-header bg-success text-white'>";
-    echo "    <h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5>";
-    echo "  </div>";
-    echo "  <div class='card-body'>";
-    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg' data-form-id='" . attr($id) . "'>";
-    echo "      <i class='fas fa-magic'></i> " . xlt("Generate Summary");
+    echo "  <div class='card-header bg-primary text-white'><h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5></div>";
+    echo "  <div class='card-body d-flex align-items-center'>";
+    // Button for generating summary - always visible so users can regenerate
+    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "'>";
+    echo "      <i class='fas fa-magic'></i> " . xlt($hasSummary ? "Regenerate Summary" : "Generate Summary");
     echo "    </button>";
-    echo "    <div id='summary_status_" . attr($id) . "' class='mt-2'></div>";
+    // Button for linking evidence - show if there's a summary
+    echo "    <button id='btn_link_evidence_" . attr($id) . "' class='btn btn-info btn-lg' data-form-id='" . attr($id) . "' " . ($hasSummary ? "" : "style='display:none;'") . ">";
+    echo "      <i class='fas fa-link'></i> " . xlt($hasLinkingMap ? "Relink Evidence" : "Link Evidence");
+    echo "    </button>";
+    echo "    <div id='summary_status_" . attr($id) . "' class='ms-3 flex-grow-1'></div>";
     echo "  </div>";
     echo "</div>";
-    
-    // Display AI summary if available
-    if (!empty($res['ai_summary'])) {
-        echo "<div class='summary-content mb-3'>";
-        echo "<h6 class='text-secondary'>" . xlt("AI Generated Summary:") . "</h6>";
-        echo "<div class='card'>";
-        echo "  <div class='card-body'>";
-        echo "    <div id='ai_summary_content_" . attr($id) . "' style='white-space: pre-wrap;'>" . text($res['ai_summary']) . "</div>";
-        echo "  </div>";
-        echo "</div>";
-        echo "</div>";
-    } else {
-        // Hidden summary display that will be shown after generation
-        echo "<div id='summary_display_" . attr($id) . "' class='summary-content mb-3 d-none'>";
-        echo "<h6 class='text-secondary'>" . xlt("AI Generated Summary:") . "</h6>";
-        echo "<div class='card'>";
-        echo "  <div class='card-body'>";
-        echo "    <div id='ai_summary_content_" . attr($id) . "' style='white-space: pre-wrap;'></div>";
-        echo "  </div>";
-        echo "</div>";
-        echo "</div>";
-    }
-    
-    // Display metadata
-    echo "<div class='summary-meta mt-3 pt-2 border-top'>";
-    echo "<small class='text-muted'>";
-    echo xlt("Generated:") . " " . text(oeFormatShortDate($res['date']));
-    
-    if (!empty($res['ai_model_used'])) {
-        echo " | " . xlt("Model:") . " " . text($res['ai_model_used']);
-    }
-    
-    if (!empty($res['processing_status'])) {
-        $statusClass = ($res['processing_status'] == 'completed') ? 'success' : 
-                      (($res['processing_status'] == 'failed') ? 'danger' : 'warning');
-        echo " | <span class='badge badge-" . $statusClass . "'>" . 
-             text(ucfirst($res['processing_status'])) . "</span>";
-    }
-    
-    // Display encounter linking status
-    if (!empty($res['encounter_uuid'])) {
-        $uuidString = UuidRegistry::uuidToString($res['encounter_uuid']);
-        echo "<br/>" . xlt("Linked to encounter:") . " ";
-        
-        if (!empty($res['encounter_date'])) {
-            echo text(oeFormatShortDate($res['encounter_date']));
-            echo " <span class='text-success'><i class='fa fa-check-circle'></i> " . 
-                 xlt("Verified") . "</span>";
-        } else {
-            echo "<span class='text-warning'><i class='fa fa-exclamation-triangle'></i> " . 
-                 xlt("UUID not found") . "</span>";
+
+    // Main content area with side-by-side linked view
+    echo "<div class='row mt-3'>";
+    // --- Summary Column ---
+    echo "<div class='col-md-6'>";
+    echo "  <h5 class='text-primary mb-2'>" . xlt("AI Generated Summary") . ($hasLinkingMap ? " <small class='text-muted'>(" . xlt("Click a line to see source") . ")</small>" : "") . "</h5>";
+    echo "  <div id='summary-display-{$id}' class='summary-container p-2 border rounded bg-light' style='font-size: 0.9em; min-height: 300px;'>";
+    if (!empty($summaryBlocks)) {
+        foreach ($summaryBlocks as $index => $block) {
+            echo "<p class='summary-block' data-summary-index='{$index}'>" . text($block) . "</p>";
         }
     } else {
-        echo "<br/><span class='text-muted'><i class='fa fa-unlink'></i> " . 
-             xlt("Not linked to encounter UUID") . "</span>";
+        echo "<p class='text-muted'>" . xlt("No summary has been generated yet. Click the button above.") . "</p>";
     }
-    
-    echo "</small>";
+    echo "  </div>";
     echo "</div>";
+
+    // --- Transcript Column ---
+    echo "<div class='col-md-6'>";
+    echo "  <h5 class='text-primary mb-2'>" . xlt("Original Transcript") . "</h5>";
+    echo "  <div id='transcript-display-{$id}' class='transcript-container p-2 border rounded' style='max-height: 400px; overflow-y: auto; font-size: 0.9em;'>";
+    if (!empty($transcriptTurns)) {
+        foreach ($transcriptTurns as $index => $turn) {
+            echo "<p class='transcript-turn' id='transcript-turn-{$id}-{$index}'>" . text($turn) . "</p>";
+        }
+    } else {
+        echo "<p class='text-muted'>" . xlt("No transcript available.") . "</p>";
+    }
+    echo "  </div>";
     echo "</div>";
-    
-    // Add JavaScript for Generate Summary functionality
+    echo "</div>"; // end .row
+
+    echo "</div>"; // end .ai-summary-report
+
+    // --- JavaScript for Linking & Generation ---
     $csrfToken = CsrfUtils::collectCsrfToken();
     echo "<script>
     document.addEventListener('DOMContentLoaded', function() {
-        console.log('=== AI SUMMARY REPORT.PHP JAVASCRIPT LOADED ===');
-        console.log('Form ID: " . attr($id) . "');
-        console.log('CSRF Token: " . attr($csrfToken) . "');
+        console.log('Linked_Evidence: Initializing for form_id " . json_encode($id) . "');
+        const formId = " . json_encode($id) . ";
+        const generateBtn = document.getElementById('btn_generate_summary_' + formId);
+        const linkBtn = document.getElementById('btn_link_evidence_' + formId);
+        const statusDiv = document.getElementById('summary_status_' + formId);
+        const summaryContainer = document.getElementById('summary-display-' + formId);
         
-        const generateBtn = document.getElementById('btn_generate_summary_" . attr($id) . "');
-        const statusDiv = document.getElementById('summary_status_" . attr($id) . "');
-        const summaryDisplay = document.getElementById('summary_display_" . attr($id) . "');
-        const summaryContent = document.getElementById('ai_summary_content_" . attr($id) . "');
-        
-        console.log('DOM elements found:', {
-            generateBtn: !!generateBtn,
-            statusDiv: !!statusDiv,
-            summaryDisplay: !!summaryDisplay,
-            summaryContent: !!summaryContent
-        });
-        
-        if (generateBtn) {
-            console.log('Adding click event listener to Generate Summary button');
-            generateBtn.addEventListener('click', async function() {
-                console.log('=== GENERATE SUMMARY BUTTON CLICKED ===');
-                alert('Button clicked! Check terminal for logs.');
-                const formId = this.getAttribute('data-form-id');
-                console.log('Form ID from button:', formId);
-                
-                // Update button state
-                console.log('Updating button state to processing...');
-                generateBtn.disabled = true;
-                generateBtn.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> " . xlt("Generating...") . "';
-                statusDiv.innerHTML = '<div class=\"alert alert-info\">" . xlt("Generating AI summary from transcription, please wait...") . "</div>';
-                
-                try {
-                    console.log('Preparing FormData for API request...');
-                    const formData = new FormData();
-                    formData.append('form_id', formId);
-                    formData.append('csrf_token_form', '" . attr($csrfToken) . "');
+        let linkingMapData = " . ($linkingMapJson ? $linkingMapJson : 'null') . ";
+        let linkingMap = linkingMapData ? linkingMapData.linking_map : null;
+        console.log('Linked_Evidence: Linking map loaded with ' + (linkingMap ? linkingMap.length : 0) + ' entries.');
+
+        function enableLinking(map) {
+            if (!summaryContainer || !map) return;
+            console.log('Linked_Evidence: Enabling click-to-highlight functionality.');
+            summaryContainer.addEventListener('click', function(e) {
+                if (e.target && e.target.classList.contains('summary-block')) {
+                    console.log('Linked_Evidence: Summary block clicked.', { summaryIndex: e.target.dataset.summaryIndex });
+                    document.querySelectorAll('.summary-block.highlight, .transcript-turn.highlight').forEach(el => el.classList.remove('highlight'));
                     
-                    console.log('FormData prepared:', {
-                        form_id: formId,
-                        csrf_token_form: '" . attr($csrfToken) . "'
-                    });
+                    e.target.classList.add('highlight');
                     
-                    const requestUrl = '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php';
-                    console.log('Making fetch request to:', requestUrl);
+                    const summaryIndex = parseInt(e.target.dataset.summaryIndex, 10);
+                    const linkData = map.find(link => link.summary_index === summaryIndex);
                     
-                    const startTime = performance.now();
-                    const response = await fetch(requestUrl, {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const endTime = performance.now();
-                    
-                    console.log('Fetch response received:', {
-                        status: response.status,
-                        statusText: response.statusText,
-                        ok: response.ok,
-                        duration: Math.round(endTime - startTime) + 'ms'
-                    });
-                    
-                    if (!response.ok) {
-                        console.error('HTTP error response:', response.status, response.statusText);
-                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                    if (linkData && linkData.transcript_indices && linkData.transcript_indices.length > 0) {
+                        console.log('Linked_Evidence: Found ' + linkData.transcript_indices.length + ' linked transcript turns.', { indices: linkData.transcript_indices });
+                        linkData.transcript_indices.forEach((transcriptIndex, i) => {
+                            const turnElement = document.getElementById(`transcript-turn-${formId}-${transcriptIndex}`);
+                            if (turnElement) {
+                                turnElement.classList.add('highlight');
+                                if (i === 0) {
+                                    turnElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }
+                            }
+                        });
                     }
-                    
-                    console.log('Parsing JSON response...');
-                    const result = await response.json();
-                    console.log('JSON response parsed:', {
-                        success: result.success,
-                        message: result.message,
-                        summaryLength: result.summary ? result.summary.length : 0,
-                        error: result.error || 'none'
-                    });
-                    
-                    if (result.success) {
-                        console.log('=== AI SUMMARY GENERATION SUCCESS ===');
-                        console.log('Summary preview (first 100 chars):', result.summary.substring(0, 100) + '...');
-                        
-                        // Display the generated summary
-                        summaryContent.textContent = result.summary;
-                        if (summaryDisplay) {
-                            console.log('Showing summary display element');
-                            summaryDisplay.classList.remove('d-none');
-                        }
-                        
-                        statusDiv.innerHTML = '<div class=\"alert alert-success\">' +
-                            '<i class=\"fas fa-check-circle\"></i> " . xlt("AI summary generated successfully!") . "' +
-                            '</div>';
-                        
-                        console.log('Success message displayed, setting auto-hide timer');
-                        // Auto-hide success message after 3 seconds
-                        setTimeout(() => {
-                            console.log('Hiding success message');
-                            statusDiv.innerHTML = '';
-                        }, 3000);
-                        
-                    } else {
-                        console.error('=== API RETURNED ERROR ===');
-                        console.error('Error message:', result.error);
-                        throw new Error(result.error || 'Unknown error occurred');
-                    }
-                    
-                } catch (error) {
-                    console.error('=== GENERATE SUMMARY ERROR ===');
-                    console.error('Error type:', error.constructor.name);
-                    console.error('Error message:', error.message);
-                    console.error('Full error:', error);
-                    
-                    statusDiv.innerHTML = '<div class=\"alert alert-danger\">' +
-                        '<i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message +
-                        '</div>';
-                } finally {
-                    console.log('Resetting button state');
-                    // Reset button state
-                    generateBtn.disabled = false;
-                    generateBtn.innerHTML = '<i class=\"fas fa-magic\"></i> " . xlt("Generate Summary") . "';
-                    console.log('=== GENERATE SUMMARY PROCESS COMPLETE ===');
                 }
             });
-        } else {
-            console.error('Generate Summary button not found in DOM');
+        }
+
+        if (linkingMap) {
+            enableLinking(linkingMap);
+        }
+
+        async function handleApiCall(button, url, statusMessage) {
+            console.log(`Linked_Evidence: Button #${button.id} clicked.`);
+            button.disabled = true;
+            button.innerHTML = `<i class=\"fas fa-spinner fa-spin\"></i> ${statusMessage}`;
+            statusDiv.innerHTML = `<div class=\"alert alert-info\">${statusMessage}...</div>`;
+            
+            try {
+                const formData = new FormData();
+                formData.append('form_id', formId);
+                formData.append('csrf_token_form', " . json_encode($csrfToken) . ");
+                console.log('Linked_Evidence: Sending AJAX request to ' + url, { formId: formId });
+                
+                const response = await fetch(url, { method: 'POST', body: formData });
+                console.log('Linked_Evidence: Received response.', { status: response.status, ok: response.ok });
+                
+                if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                
+                const result = await response.json();
+                console.log('Linked_Evidence: Parsed JSON response.', result);
+
+                if (result.success) {
+                    statusDiv.innerHTML = `<div class=\"alert alert-success\"><i class=\"fas fa-check-circle\"></i> ${result.message} Page will refresh.</div>`;
+                    console.log('Linked_Evidence: API call successful, refreshing page content.');
+                    setTimeout(() => window.parent.refreshVisitDisplay(), 1500);
+                } else {
+                    throw new Error(result.error || 'Unknown error occurred');
+                }
+            } catch (error) {
+                console.error('Linked_Evidence: API call failed.', { message: error.message });
+                statusDiv.innerHTML = `<div class=\"alert alert-danger\"><i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message + '</div>';
+                button.disabled = false;
+                button.innerHTML = button.dataset.originalHtml; // Restore original button text
+            }
+        }
+
+        if (generateBtn) {
+            generateBtn.dataset.originalHtml = generateBtn.innerHTML;
+            generateBtn.addEventListener('click', () => handleApiCall(
+                generateBtn,
+                '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php',
+                '" . xlt("Generating Summary") . "'
+            ));
+        }
+
+        if (linkBtn) {
+            linkBtn.dataset.originalHtml = linkBtn.innerHTML;
+            linkBtn.addEventListener('click', () => handleApiCall(
+                linkBtn,
+                '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/link_evidence.php',
+                '" . xlt("Linking Evidence") . "'
+            ));
         }
     });
     </script>";
-    
-    // Add CSS for better styling
+
+    // --- CSS for Highlighting ---
     echo "<style>
-    .ai-scribe-card {
-        border: 2px solid #28a745;
-        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.1);
-    }
-    
-    .ai-scribe-card .btn-success {
-        font-size: 1.1em;
-        font-weight: 600;
-        padding: 12px 24px;
-        border-radius: 8px;
-        box-shadow: 0 3px 6px rgba(40, 167, 69, 0.3);
-        transition: all 0.2s ease;
-    }
-    
-    .ai-scribe-card .btn-success:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 10px rgba(40, 167, 69, 0.4);
-    }
-    
-    .ai-scribe-card .btn-success:disabled {
-        transform: none;
-        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.2);
-    }
+    .summary-block { cursor: pointer; margin-bottom: 0.8rem; padding: 6px; border-radius: 4px; transition: background-color 0.2s; }
+    .summary-block:hover { background-color: #e9ecef; }
+    .summary-block.highlight { background-color: #cfe2ff; font-weight: bold; }
+    .transcript-turn { padding: 2px 4px; margin-bottom: 0.8rem; transition: background-color 0.2s; }
+    .transcript-turn.highlight { background-color: #fff3cd; border-radius: 4px; }
+    .ai-scribe-card .btn-lg { font-weight: 600; }
     </style>";
-} 
+    
+    // Log that the function completed successfully
+    error_log("AI_SUMMARY_REPORT: Function completed successfully for form ID {$id}", 3, "/tmp/ai_summary.log");
+}
+
+// Log that the function was defined
+error_log("AI_SUMMARY_REPORT_FILE: ai_summary_report function has been defined", 3, "/tmp/ai_summary.log"); 

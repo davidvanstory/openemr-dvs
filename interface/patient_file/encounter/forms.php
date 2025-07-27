@@ -982,9 +982,16 @@ if (
 
         // Use the form's report.php for display.  Forms with names starting with LBF
         // are list-based forms sharing a single collection of code.
+        
+        // Debug: Log which form is being rendered
+        error_log("FORMS_PHP: Rendering form - formdir='$formdir', encounter='$encounter', form_id='{$iter['form_id']}'", 3, "/tmp/ai_summary.log");
+        
         $reportRenderer = new FormReportRenderer($formLocator);
         $reportColumns = 2;
         $reportRenderer->renderReport($formdir, 'forms.php', $attendant_id, $encounter, $reportColumns, $iter['form_id']);
+        
+        // Debug: Log that form rendering completed
+        error_log("FORMS_PHP: Completed rendering form - formdir='$formdir', form_id='{$iter['form_id']}'", 3, "/tmp/ai_summary.log");
 
         if ($esign->isLogViewable()) {
             $esign->renderLog();

@@ -26,12 +26,12 @@ EXAMPLE INPUT:
 {
   "transcript_turns": [
     "Turn 0: hey, Jason, tell me about your shortness of breath. I heard you're having some shortness of breath.",
-    "Turn 1: Yeah, you know, it's just the last week or so I found coming up and down the stairs in the house, I started to feel shortness of breath, a little bit of dizziness when I got to the top of the stairs. But I sat down, I took 10 deep breaths and I was fine. But then when I woke up in the morning, I kind of tripped a little bit because I was so short of breath. And yeah, the dizziness came back.",
+    "Turn 1: Yeah, you know, it's just the last week or so I found coming up and down the stairs in the house, I started to feel shortness of breath, a little bit of dizziness when I got to the top of the stairs...",
     "Turn 2: Have you noticed any chest pain or chest pressure?",
-    "Turn 3: No chest pain, but I did feel a little tingling in my shoulder on the side of my heart. Just, you know, that's why I called. Okay, got it.",
-    "Turn 4: You know, I'm looking at my medical record right now and you have a history of diabetes and hypertension... I'm only bringing it up because, you know, diabetes, hypertension. When you tell me you have shortness of breath, I'm worried it could be related to your heart because you have these risk factors.",
-    "Turn 5: I'm working on it, doc.",
-    "Turn 6: ...in terms of your lightheadedness, I think that's probably because we have you on too many medications, actually, for your blood pressure. So I think your lightheadedness is because of what we call orthostatic hypotension. When you stand up or you go up the stairs, you're feeling lightheaded. So I want you to stop taking your metoprolol.",
+    "Turn 3: No chest pain, but I did feel a little tingling in my shoulder on the side of my heart...",
+    "Turn 4: You know, I'm looking at my medical record right now and you have a history of diabetes and hypertension... When you tell me you have shortness of breath, I'm worried it could be related to your heart because you have these risk factors.",
+    "Turn 5: ...in terms of your lightheadedness, I think that's probably because we have you on too many medications, actually, for your blood pressure... I think your lightheadedness is because of what we call orthostatic hypotension.",
+    "Turn 6: So I want you to stop taking your metoprolol.",
     "Turn 7: All right? Okay, stop taking my metoprolol."
   ],
   "summary_blocks": [
@@ -66,7 +66,7 @@ YOUR JSON OUTPUT:
     },
     {
       "summary_index": 4,
-      "transcript_indices": [0, 1, 4, 6]
+      "transcript_indices": [0, 1, 4, 5]
     },
     {
       "summary_index": 5,
@@ -74,4 +74,3 @@ YOUR JSON OUTPUT:
     }
   ]
 }
-

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `form_ai_summary` (
   `date` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `voice_transcription` LONGTEXT COMMENT 'Original voice transcription text',
   `ai_summary` LONGTEXT COMMENT 'AI-generated summary of encounter (future use)',
+  `linking_map_json` JSON DEFAULT NULL COMMENT 'JSON array mapping summary blocks to transcript turns',
   `summary_type` ENUM('transcription', 'summary', 'clinical_notes') DEFAULT 'transcription',
   `ai_model_used` VARCHAR(50) DEFAULT 'whisper-1',
   `processing_status` ENUM('pending', 'processing', 'completed', 'failed') DEFAULT 'completed',
