@@ -151,7 +151,7 @@ try {
     ai_log("  - Average summary block length: " . round(array_sum(array_map('strlen', $summaryBlocks)) / count($summaryBlocks)) . " chars");
     
     $linkingPayload = [
-        'model' => 'gpt-4-turbo',
+        'model' => 'gpt-4o',
         'response_format' => ['type' => 'json_object'],
         'messages' => [
             ['role' => 'system', 'content' => $linkingPrompt],
@@ -225,10 +225,16 @@ try {
     $validatedMap = [];
     $invalidLinks = 0;
     $totalLinkedTurns = 0;
+    $suspiciousLinks = 0;
     
-    foreach ($rawLinkingMap as $link) {
+    ai_log("=== DETAILED MAPPING ANALYSIS START ===");
+    
+    foreach ($rawLinkingMap as $linkIndex => $link) {
         if (isset($link['summary_index']) && is_int($link['summary_index']) && $link['summary_index'] < $summaryCount) {
             $validTranscriptIndices = [];
+            $summaryIndex = $link['summary_index'];
+            $summaryContent = $summaryBlocks[$summaryIndex] ?? '';
+            
             if (isset($link['transcript_indices']) && is_array($link['transcript_indices'])) {
                 foreach ($link['transcript_indices'] as $t_idx) {
                     if (is_int($t_idx) && $t_idx < $transcriptCount) {
@@ -239,7 +245,30 @@ try {
                         ai_log("❌ Invalid transcript index $t_idx for summary index " . $link['summary_index']);
                     }
                 }
+                
+                // ACCURACY VALIDATION: Log detailed content for suspicious mappings
+                if (!empty($validTranscriptIndices) && $linkIndex < 5) { // Check first 5 mappings in detail
+                    ai_log("📋 DETAILED MAPPING #$linkIndex ANALYSIS:");
+                    ai_log("   📝 Summary Block $summaryIndex: '" . substr($summaryContent, 0, 120) . "...'");
+                    ai_log("   🎤 Linked to " . count($validTranscriptIndices) . " transcript turns:");
+                    
+                    foreach (array_slice($validTranscriptIndices, 0, 3) as $idx => $tIdx) { // Show first 3 turns
+                        $transcriptContent = $transcriptTurns[$tIdx] ?? '';
+                        ai_log("      Turn $tIdx: '" . substr($transcriptContent, 0, 100) . "...'");
+                        
+                        // SEMANTIC VALIDATION: Check for obvious mismatches
+                        $semanticMatch = validateSemanticMatch($summaryContent, $transcriptContent);
+                        if (!$semanticMatch['likely_match']) {
+                            $suspiciousLinks++;
+                            ai_log("      ⚠️  SUSPICIOUS: " . $semanticMatch['reason']);
+                        }
+                    }
+                    if (count($validTranscriptIndices) > 3) {
+                        ai_log("      ... and " . (count($validTranscriptIndices) - 3) . " more turns");
+                    }
+                }
             }
+            
             $validatedMap[] = [
                 'summary_index' => $link['summary_index'], 
                 'transcript_indices' => $validTranscriptIndices
@@ -257,6 +286,7 @@ try {
     ai_log("  ✅ Total transcript turns linked: $totalLinkedTurns");
     ai_log("  ✅ Coverage: " . round((count($validatedMap) / $summaryCount) * 100, 1) . "% of summary blocks mapped");
     ai_log("  ❌ Invalid links removed: $invalidLinks");
+    ai_log("  ⚠️  Suspicious links detected: $suspiciousLinks");
 
     // Save to database
     ai_log("=== DATABASE UPDATE START ===");
@@ -431,5 +461,122 @@ function makeOpenAICall(array $payload, string $apiKey): array
     ai_log("=== OPENAI CURL REQUEST SUCCESS ===");
     
     return $responseData;
+}
+
+/**
+ * Helper function to validate semantic match between summary and transcript.
+ * Designed to catch obvious mismatches in medical contexts.
+ */
+function validateSemanticMatch(string $summary, string $transcript): array
+{
+    // Normalize text for comparison
+    $summaryLower = strtolower(trim($summary));
+    $transcriptLower = strtolower(trim($transcript));
+    
+    // Skip header blocks (they typically don't have direct transcript matches)
+    if (preg_match('/^\*\*[^*]+\*\*$/', $summary)) {
+        return ['likely_match' => true, 'reason' => 'Header block - validation skipped'];
+    }
+    
+    // Medical condition keywords
+    $medicalConditions = [
+        'diabetes', 'diabetic', 'hypertension', 'blood pressure', 'cardiac', 'heart',
+        'orthostatic', 'hypotension', 'medication', 'metoprolol', 'atorvastatin',
+        'shortness of breath', 'dyspnea', 'chest pain', 'dizziness', 'lightheaded'
+    ];
+    
+    // Lifestyle/social keywords  
+    $lifestyleKeywords = [
+        'wine', 'alcohol', 'drink', 'smoking', 'tobacco', 'exercise', 'diet'
+    ];
+    
+    // Extract key medical terms from summary
+    $summaryMedicalTerms = [];
+    $summaryLifestyleTerms = [];
+    
+    foreach ($medicalConditions as $term) {
+        if (strpos($summaryLower, $term) !== false) {
+            $summaryMedicalTerms[] = $term;
+        }
+    }
+    
+    foreach ($lifestyleKeywords as $term) {
+        if (strpos($summaryLower, $term) !== false) {
+            $summaryLifestyleTerms[] = $term;
+        }
+    }
+    
+    // Extract key terms from transcript
+    $transcriptMedicalTerms = [];
+    $transcriptLifestyleTerms = [];
+    
+    foreach ($medicalConditions as $term) {
+        if (strpos($transcriptLower, $term) !== false) {
+            $transcriptMedicalTerms[] = $term;
+        }
+    }
+    
+    foreach ($lifestyleKeywords as $term) {
+        if (strpos($transcriptLower, $term) !== false) {
+            $transcriptLifestyleTerms[] = $term;
+        }
+    }
+    
+    // Check for obvious mismatches
+    if (!empty($summaryMedicalTerms) && !empty($transcriptLifestyleTerms) && empty($transcriptMedicalTerms)) {
+        return [
+            'likely_match' => false, 
+            'reason' => 'Medical summary (' . implode(', ', $summaryMedicalTerms) . ') linked to lifestyle content (' . implode(', ', $transcriptLifestyleTerms) . ')'
+        ];
+    }
+    
+    if (!empty($summaryLifestyleTerms) && !empty($transcriptMedicalTerms) && empty($transcriptLifestyleTerms)) {
+        return [
+            'likely_match' => false, 
+            'reason' => 'Lifestyle summary (' . implode(', ', $summaryLifestyleTerms) . ') linked to medical content (' . implode(', ', $transcriptMedicalTerms) . ')'
+        ];
+    }
+    
+    // Check for any shared medical terms
+    $sharedMedicalTerms = array_intersect($summaryMedicalTerms, $transcriptMedicalTerms);
+    if (!empty($sharedMedicalTerms)) {
+        return [
+            'likely_match' => true, 
+            'reason' => 'Shared medical terms: ' . implode(', ', $sharedMedicalTerms)
+        ];
+    }
+    
+    // Check for any shared lifestyle terms
+    $sharedLifestyleTerms = array_intersect($summaryLifestyleTerms, $transcriptLifestyleTerms);
+    if (!empty($sharedLifestyleTerms)) {
+        return [
+            'likely_match' => true, 
+            'reason' => 'Shared lifestyle terms: ' . implode(', ', $sharedLifestyleTerms)
+        ];
+    }
+    
+    // Simple word overlap check for remaining cases
+    $summaryWords = array_filter(explode(' ', $summaryLower), function($word) {
+        return strlen($word) > 3 && !in_array($word, ['the', 'and', 'that', 'with', 'have', 'this', 'were', 'been', 'their']);
+    });
+    
+    $transcriptWords = array_filter(explode(' ', $transcriptLower), function($word) {
+        return strlen($word) > 3 && !in_array($word, ['the', 'and', 'that', 'with', 'have', 'this', 'were', 'been', 'their']);
+    });
+    
+    $sharedWords = array_intersect($summaryWords, $transcriptWords);
+    $overlapRatio = count($sharedWords) / max(count($summaryWords), 1);
+    
+    if ($overlapRatio >= 0.3) { // 30% word overlap
+        return [
+            'likely_match' => true, 
+            'reason' => 'Good word overlap (' . round($overlapRatio * 100) . '%): ' . implode(', ', array_slice($sharedWords, 0, 3))
+        ];
+    }
+    
+    return [
+        'likely_match' => false, 
+        'reason' => 'Low semantic similarity (only ' . round($overlapRatio * 100) . '% word overlap)'
+    ];
 }
 ?>
