@@ -13,12 +13,12 @@
 error_log("AI_SUMMARY_REPORT_FILE: report.php is being included", 3, "/tmp/ai_summary.log");
 
 require_once(__DIR__ . "/../../globals.php");
-// Temporarily commenting out TextUtil to debug loading issue
-// require_once($GLOBALS['srcdir'] . "/Common/Utils/TextUtil.php");
+// Enable TextUtil usage - this is critical for proper text splitting
+require_once($GLOBALS['srcdir'] . "/../src/Common/Utils/TextUtil.php");
 
 use OpenEMR\Common\Uuid\UuidRegistry;
 use OpenEMR\Common\Csrf\CsrfUtils;
-// use OpenEMR\Common\Utils\TextUtil;
+use OpenEMR\Common\Utils\TextUtil;
 
 // Log after includes are loaded
 error_log("AI_SUMMARY_REPORT_FILE: All includes loaded, defining ai_summary_report function", 3, "/tmp/ai_summary.log");
@@ -66,9 +66,21 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     // Log the current state for debugging
     error_log("AI_SUMMARY_DEBUG: Form ID {$id}, hasSummary: " . ($hasSummary ? 'YES' : 'NO') . ", hasLinkingMap: " . ($hasLinkingMap ? 'YES' : 'NO'), 3, "/tmp/ai_summary.log");
 
-    // Prepare data for rendering using simple string functions (temporarily)
-    $transcriptTurns = !empty($transcript) ? explode("\n", $transcript) : [];
-    $summaryBlocks = !empty($summary) ? explode("\n\n", $summary) : [];
+    // Use TextUtil for proper splitting
+    $transcriptTurns = [];
+    $summaryBlocks = [];
+    
+    if (!empty($transcript)) {
+        error_log("AI_SUMMARY_REPORT: Using TextUtil to split transcript", 3, "/tmp/ai_summary.log");
+        $transcriptTurns = TextUtil::splitByConversationTurns($transcript);
+        error_log("AI_SUMMARY_REPORT: Transcript split into " . count($transcriptTurns) . " turns", 3, "/tmp/ai_summary.log");
+    }
+    
+    if (!empty($summary)) {
+        error_log("AI_SUMMARY_REPORT: Using TextUtil to split summary", 3, "/tmp/ai_summary.log");
+        $summaryBlocks = TextUtil::splitSummaryIntoBlocks($summary);
+        error_log("AI_SUMMARY_REPORT: Summary split into " . count($summaryBlocks) . " blocks", 3, "/tmp/ai_summary.log");
+    }
 
     echo "<div class='ai-summary-report border rounded p-3 mb-3'>";
 
@@ -76,27 +88,35 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     echo "<div class='card mb-3 ai-scribe-card'>";
     echo "  <div class='card-header bg-primary text-white'><h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5></div>";
     echo "  <div class='card-body d-flex align-items-center'>";
+    
     // Button for generating summary - always visible so users can regenerate
-    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "' onclick=\"console.log('INLINE ONCLICK FIRED for button " . attr($id) . "'); console.log('About to call handleApiCall...'); handleApiCall_" . attr($id) . "(this); return false;\">";
+    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "'>";
     echo "      <i class='fas fa-magic'></i> " . xlt($hasSummary ? "Regenerate Summary" : "Generate Summary");
     echo "    </button>";
+    
     // Button for linking evidence - show if there's a summary
     echo "    <button id='btn_link_evidence_" . attr($id) . "' class='btn btn-info btn-lg' data-form-id='" . attr($id) . "' " . ($hasSummary ? "" : "style='display:none;'") . ">";
     echo "      <i class='fas fa-link'></i> " . xlt($hasLinkingMap ? "Relink Evidence" : "Link Evidence");
     echo "    </button>";
+    
     echo "    <div id='summary_status_" . attr($id) . "' class='ms-3 flex-grow-1'></div>";
     echo "  </div>";
     echo "</div>";
 
     // Main content area with side-by-side linked view
     echo "<div class='row mt-3'>";
+    
     // --- Summary Column ---
     echo "<div class='col-md-6'>";
     echo "  <h5 class='text-primary mb-2'>" . xlt("AI Generated Summary") . ($hasLinkingMap ? " <small class='text-muted'>(" . xlt("Click a line to see source") . ")</small>" : "") . "</h5>";
     echo "  <div id='summary-display-{$id}' class='summary-container p-2 border rounded bg-light' style='font-size: 0.9em; min-height: 300px;'>";
+    
     if (!empty($summaryBlocks)) {
         foreach ($summaryBlocks as $index => $block) {
-            echo "<p class='summary-block' data-summary-index='{$index}'>" . text($block) . "</p>";
+            // Check if it's a header (starts and ends with **)
+            $isHeader = preg_match('/^\*\*[^*]+\*\*$/', $block);
+            $cssClass = $isHeader ? 'summary-block summary-header' : 'summary-block';
+            echo "<p class='{$cssClass}' data-summary-index='{$index}'>" . text($block) . "</p>";
         }
     } else {
         echo "<p class='text-muted'>" . xlt("No summary has been generated yet. Click the button above.") . "</p>";
@@ -108,6 +128,7 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     echo "<div class='col-md-6'>";
     echo "  <h5 class='text-primary mb-2'>" . xlt("Original Transcript") . "</h5>";
     echo "  <div id='transcript-display-{$id}' class='transcript-container p-2 border rounded' style='max-height: 400px; overflow-y: auto; font-size: 0.9em;'>";
+    
     if (!empty($transcriptTurns)) {
         foreach ($transcriptTurns as $index => $turn) {
             echo "<p class='transcript-turn' id='transcript-turn-{$id}-{$index}'>" . text($turn) . "</p>";
@@ -121,237 +142,164 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
 
     echo "</div>"; // end .ai-summary-report
     
-    // BASIC JAVASCRIPT TEST - Log that we got this far
-    echo "<script>console.log('BASIC TEST: JavaScript is executing in report.php for form ID " . $id . "');</script>";
-
-    // CREATE GLOBAL FUNCTION FIRST - Separate script tag to ensure it gets created
+    // Get CSRF token for API calls
     $csrfToken = CsrfUtils::collectCsrfToken();
-    echo "<script>
-    console.log('=== CREATING GLOBAL FUNCTION FOR FORM " . $id . " ===');
     
-    // Create the global function
-    window.handleApiCall_" . $id . " = function(button) {
-        console.log('=== GLOBAL HANDLEAPICALL FUNCTION CALLED ===');
-        console.log('Button:', button);
+    // JavaScript for button handling and linking functionality
+    echo "<script>
+    console.log('=== AI SUMMARY JAVASCRIPT LOADING ===');
+    console.log('Script loading for form ID: " . json_encode($id) . "');
+    console.log('Document ready state:', document.readyState);
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('=== DOM CONTENT LOADED EVENT FIRED ===');
+        console.log('AI_SUMMARY: Initializing for form_id " . json_encode($id) . "');
+        
         const formId = " . json_encode($id) . ";
+        const csrfToken = " . json_encode($csrfToken) . ";
+        
+        console.log('AI_SUMMARY: formId:', formId);
+        console.log('AI_SUMMARY: csrfToken length:', csrfToken.length);
+        
+        // Find DOM elements
+        const generateBtn = document.getElementById('btn_generate_summary_' + formId);
+        const linkBtn = document.getElementById('btn_link_evidence_' + formId);
         const statusDiv = document.getElementById('summary_status_' + formId);
+        const summaryContainer = document.getElementById('summary-display-' + formId);
         
-        console.log('FormId:', formId);
-        console.log('StatusDiv:', statusDiv);
+        console.log('AI_SUMMARY: Generate button found:', !!generateBtn);
+        console.log('AI_SUMMARY: Link button found:', !!linkBtn);
+        console.log('AI_SUMMARY: Status div found:', !!statusDiv);
+        console.log('AI_SUMMARY: Summary container found:', !!summaryContainer);
         
-        // Update button state
-        console.log('Making test API call...');
-        button.disabled = true;
-        button.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> Generating...';
-        if (statusDiv) {
-            statusDiv.innerHTML = '<div class=\"alert alert-info\">Generating AI summary, please wait...</div>';
+        // Load linking map data
+        let linkingMapData = " . ($linkingMapJson ? $linkingMapJson : 'null') . ";
+        let linkingMap = linkingMapData ? linkingMapData.linking_map : null;
+        console.log('AI_SUMMARY: Linking map loaded with ' + (linkingMap ? linkingMap.length : 0) + ' entries.');
+
+        // Function to enable click-to-highlight linking
+        function enableLinking(map) {
+            if (!summaryContainer || !map) {
+                console.log('AI_SUMMARY: Cannot enable linking - missing container or map');
+                return;
+            }
+            
+            console.log('AI_SUMMARY: Enabling click-to-highlight functionality');
+            summaryContainer.addEventListener('click', function(e) {
+                if (e.target && e.target.classList.contains('summary-block')) {
+                    console.log('AI_SUMMARY: Summary block clicked:', e.target.dataset.summaryIndex);
+                    
+                    // Clear existing highlights
+                    document.querySelectorAll('.summary-block.highlight, .transcript-turn.highlight').forEach(el => {
+                        el.classList.remove('highlight');
+                    });
+                    
+                    // Highlight clicked summary block
+                    e.target.classList.add('highlight');
+                    
+                    // Find and highlight linked transcript turns
+                    const summaryIndex = parseInt(e.target.dataset.summaryIndex, 10);
+                    const linkData = map.find(link => link.summary_index === summaryIndex);
+                    
+                    if (linkData && linkData.transcript_indices && linkData.transcript_indices.length > 0) {
+                        console.log('AI_SUMMARY: Found ' + linkData.transcript_indices.length + ' linked transcript turns:', linkData.transcript_indices);
+                        
+                        linkData.transcript_indices.forEach((transcriptIndex, i) => {
+                            const turnElement = document.getElementById('transcript-turn-' + formId + '-' + transcriptIndex);
+                            if (turnElement) {
+                                turnElement.classList.add('highlight');
+                                // Scroll first linked turn into view
+                                if (i === 0) {
+                                    turnElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }
+                            }
+                        });
+                    } else {
+                        console.log('AI_SUMMARY: No linked transcript turns found for summary index:', summaryIndex);
+                    }
+                }
+            });
         }
-        
-        // Prepare form data
-        const formData = new FormData();
-        formData.append('form_id', formId);
-        formData.append('csrf_token_form', '" . $csrfToken . "');
-        
-        console.log('FormData prepared:', { form_id: formId, csrf_token: '" . $csrfToken . "' });
-        
-        // Make API call
-        fetch('" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => {
-            console.log('Response received:', response.status, response.statusText);
-            return response.text();
-        })
-        .then(text => {
-            console.log('Response text:', text);
+
+        // Enable linking if map exists
+        if (linkingMap) {
+            enableLinking(linkingMap);
+        }
+
+        // Generic API call handler
+        async function handleApiCall(button, url, statusMessage) {
+            console.log('AI_SUMMARY: Starting API call to:', url);
+            console.log('AI_SUMMARY: FormId:', formId);
+            console.log('AI_SUMMARY: Button:', button.id);
+            
+            // Store original button content
+            const originalContent = button.innerHTML;
+            
+            // Update UI
+            button.disabled = true;
+            button.innerHTML = '<i class=\"fas fa-spinner fa-spin\"></i> ' + statusMessage + '...';
+            statusDiv.innerHTML = '<div class=\"alert alert-info\"><i class=\"fas fa-info-circle\"></i> ' + statusMessage + ', please wait...</div>';
+            
             try {
-                const result = JSON.parse(text);
-                console.log('Parsed JSON:', result);
+                // Prepare form data
+                const formData = new FormData();
+                formData.append('form_id', formId);
+                formData.append('csrf_token_form', csrfToken);
+                
+                console.log('AI_SUMMARY: Sending AJAX request...');
+                const startTime = performance.now();
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const endTime = performance.now();
+                console.log('AI_SUMMARY: Response received in ' + Math.round(endTime - startTime) + 'ms');
+                console.log('AI_SUMMARY: Response status:', response.status, response.statusText);
+                
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                }
+                
+                const responseText = await response.text();
+                console.log('AI_SUMMARY: Raw response:', responseText.substring(0, 200) + '...');
+                
+                const result = JSON.parse(responseText);
+                console.log('AI_SUMMARY: Parsed response:', result);
+
                 if (result.success) {
-                    if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-success\">Summary generated successfully!</div>';
+                    statusDiv.innerHTML = '<div class=\"alert alert-success\"><i class=\"fas fa-check-circle\"></i> ' + result.message + ' Page will refresh shortly.</div>';
+                    console.log('AI_SUMMARY: API call successful, refreshing page content...');
+                    
+                    // Refresh the encounter display after a short delay
                     setTimeout(() => {
-                        if (window.parent && window.parent.refreshVisitDisplay) {
+                        if (window.parent && typeof window.parent.refreshVisitDisplay === 'function') {
                             window.parent.refreshVisitDisplay();
                         } else {
                             location.reload();
                         }
                     }, 1500);
                 } else {
-                    throw new Error(result.error || 'Unknown error');
-                }
-            } catch (e) {
-                console.error('JSON parse error:', e);
-                if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-danger\">Error: ' + e.message + '</div>';
-            }
-        })
-        .catch(error => {
-            console.error('Fetch error:', error);
-            if (statusDiv) statusDiv.innerHTML = '<div class=\"alert alert-danger\">Error: ' + error.message + '</div>';
-        })
-        .finally(() => {
-            button.disabled = false;
-            button.innerHTML = '<i class=\"fas fa-magic\"></i> Generate Summary';
-        });
-    };
-    
-    console.log('Global function handleApiCall_" . $id . " created successfully');
-    console.log('Function type:', typeof window.handleApiCall_" . $id . ");
-    </script>";
-
-    // --- JavaScript for Linking & Generation ---
-    echo "<script>
-    // IMMEDIATE LOGS - these should appear as soon as script tag is processed
-    console.log('=== AI SUMMARY JAVASCRIPT LOADING ===');
-    console.log('Script tag is executing for form ID: " . json_encode($id) . "');
-    console.log('Current timestamp:', new Date().toISOString());
-    console.log('Document ready state:', document.readyState);
-    
-    // Test if we can access the button immediately
-    console.log('Trying to find button immediately...');
-    var immediateBtn = document.getElementById('btn_generate_summary_" . $id . "');
-    console.log('Button found immediately:', immediateBtn);
-    
-    // Function already created in separate script tag above
-    console.log('Checking if global function exists:', typeof window.handleApiCall_" . $id . ");
-    
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log('=== DOM CONTENT LOADED EVENT FIRED ===');
-        console.log('Linked_Evidence: Initializing for form_id " . json_encode($id) . "');
-        const formId = " . json_encode($id) . ";
-        console.log('Linked_Evidence: formId variable set to:', formId);
-        
-        console.log('Linked_Evidence: Looking for button with ID: btn_generate_summary_' + formId);
-        const generateBtn = document.getElementById('btn_generate_summary_' + formId);
-        console.log('Linked_Evidence: Generate button element:', generateBtn);
-        
-        const linkBtn = document.getElementById('btn_link_evidence_' + formId);
-        console.log('Linked_Evidence: Link button element:', linkBtn);
-        
-        const statusDiv = document.getElementById('summary_status_' + formId);
-        console.log('Linked_Evidence: Status div element:', statusDiv);
-        
-        const summaryContainer = document.getElementById('summary-display-' + formId);
-        console.log('Linked_Evidence: Summary container element:', summaryContainer);
-        
-        let linkingMapData = " . ($linkingMapJson ? $linkingMapJson : 'null') . ";
-        let linkingMap = linkingMapData ? linkingMapData.linking_map : null;
-        console.log('Linked_Evidence: Linking map loaded with ' + (linkingMap ? linkingMap.length : 0) + ' entries.');
-
-        function enableLinking(map) {
-            if (!summaryContainer || !map) return;
-            console.log('Linked_Evidence: Enabling click-to-highlight functionality.');
-            summaryContainer.addEventListener('click', function(e) {
-                if (e.target && e.target.classList.contains('summary-block')) {
-                    console.log('Linked_Evidence: Summary block clicked.', { summaryIndex: e.target.dataset.summaryIndex });
-                    document.querySelectorAll('.summary-block.highlight, .transcript-turn.highlight').forEach(el => el.classList.remove('highlight'));
-                    
-                    e.target.classList.add('highlight');
-                    
-                    const summaryIndex = parseInt(e.target.dataset.summaryIndex, 10);
-                    const linkData = map.find(link => link.summary_index === summaryIndex);
-                    
-                    if (linkData && linkData.transcript_indices && linkData.transcript_indices.length > 0) {
-                        console.log('Linked_Evidence: Found ' + linkData.transcript_indices.length + ' linked transcript turns.', { indices: linkData.transcript_indices });
-                        linkData.transcript_indices.forEach((transcriptIndex, i) => {
-                            const turnElement = document.getElementById(`transcript-turn-${formId}-${transcriptIndex}`);
-                            if (turnElement) {
-                                turnElement.classList.add('highlight');
-                                if (i === 0) {
-                                    turnElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                }
-                            }
-                        });
-                    }
-                }
-            });
-        }
-
-        if (linkingMap) {
-            enableLinking(linkingMap);
-        }
-
-        async function handleApiCall(button, url, statusMessage) {
-            console.log(`Linked_Evidence: Button #${button.id} clicked, calling handleApiCall`);
-            console.log('Linked_Evidence: URL:', url);
-            console.log('Linked_Evidence: FormId:', formId);
-            console.log('Linked_Evidence: CSRF Token:', " . json_encode($csrfToken) . ");
-            
-            button.disabled = true;
-            button.innerHTML = `<i class=\"fas fa-spinner fa-spin\"></i> ${statusMessage}`;
-            statusDiv.innerHTML = `<div class=\"alert alert-info\">${statusMessage}...</div>`;
-            
-            try {
-                const formData = new FormData();
-                formData.append('form_id', formId);
-                formData.append('csrf_token_form', " . json_encode($csrfToken) . ");
-                
-                console.log('Linked_Evidence: FormData contents:');
-                for (let [key, value] of formData.entries()) {
-                    console.log('  ' + key + ':', value);
-                }
-                
-                console.log('Linked_Evidence: Sending AJAX request to ' + url);
-                const startTime = performance.now();
-                
-                const response = await fetch(url, { method: 'POST', body: formData });
-                const endTime = performance.now();
-                
-                console.log('Linked_Evidence: Response received in ' + Math.round(endTime - startTime) + 'ms');
-                console.log('Linked_Evidence: Response details:', { 
-                    status: response.status, 
-                    statusText: response.statusText,
-                    ok: response.ok,
-                    headers: Object.fromEntries(response.headers.entries())
-                });
-                
-                if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-                
-                const responseText = await response.text();
-                console.log('Linked_Evidence: Raw response text:', responseText);
-                
-                const result = JSON.parse(responseText);
-                console.log('Linked_Evidence: Parsed JSON response.', result);
-
-                if (result.success) {
-                    statusDiv.innerHTML = `<div class=\"alert alert-success\"><i class=\"fas fa-check-circle\"></i> ${result.message} Page will refresh.</div>`;
-                    console.log('Linked_Evidence: API call successful, refreshing page content.');
-                    setTimeout(() => window.parent.refreshVisitDisplay(), 1500);
-                } else {
                     throw new Error(result.error || 'Unknown error occurred');
                 }
-                            } catch (error) {
-                    console.error('Linked_Evidence: API call failed.');
-                    console.error('Linked_Evidence: Error type:', error.constructor.name);
-                    console.error('Linked_Evidence: Error message:', error.message);
-                    console.error('Linked_Evidence: Full error object:', error);
-                    if (error.stack) {
-                        console.error('Linked_Evidence: Error stack:', error.stack);
-                    }
-                    
-                    statusDiv.innerHTML = `<div class=\"alert alert-danger\"><i class=\"fas fa-exclamation-triangle\"></i> " . xlt("Error:") . " ' + error.message + '</div>';
-                    button.disabled = false;
-                    button.innerHTML = button.dataset.originalHtml; // Restore original button text
-                }
+                
+            } catch (error) {
+                console.error('AI_SUMMARY: API call failed:', error);
+                statusDiv.innerHTML = '<div class=\"alert alert-danger\"><i class=\"fas fa-exclamation-triangle\"></i> Error: ' + error.message + '</div>';
+                
+                // Restore button
+                button.disabled = false;
+                button.innerHTML = originalContent;
+            }
         }
 
+        // Attach event listeners to buttons
         if (generateBtn) {
-            console.log('Linked_Evidence: Generate Summary button found, adding click listener');
-            generateBtn.dataset.originalHtml = generateBtn.innerHTML;
-            
-            // Add a simple click test first
-            generateBtn.onclick = function(e) {
-                console.log('=== BUTTON CLICKED (onclick) ===');
-                console.log('Button element:', this);
-                console.log('Event object:', e);
-                alert('Button clicked! Check console for logs.');
+            console.log('AI_SUMMARY: Attaching click handler to generate button');
+            generateBtn.addEventListener('click', function(e) {
                 e.preventDefault();
-            };
-            
-            generateBtn.addEventListener('click', (e) => {
-                console.log('=== BUTTON CLICKED (addEventListener) ===');
-                console.log('Linked_Evidence: Generate Summary button clicked!');
-                e.preventDefault();
+                console.log('AI_SUMMARY: Generate Summary button clicked');
                 handleApiCall(
                     generateBtn,
                     '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/generate_summary.php',
@@ -359,38 +307,74 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
                 );
             });
         } else {
-            console.error('Linked_Evidence: Generate Summary button NOT found in DOM');
-            console.error('Linked_Evidence: Available elements with generate_summary in ID:');
-            const allElements = document.querySelectorAll('[id*=\"generate_summary\"]');
-            console.error('Found elements:', allElements);
+            console.error('AI_SUMMARY: Generate button not found!');
         }
 
         if (linkBtn) {
-            linkBtn.dataset.originalHtml = linkBtn.innerHTML;
-            linkBtn.addEventListener('click', () => handleApiCall(
-                linkBtn,
-                '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/link_evidence.php',
-                '" . xlt("Linking Evidence") . "'
-            ));
+            console.log('AI_SUMMARY: Attaching click handler to link button');
+            linkBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                console.log('AI_SUMMARY: Link Evidence button clicked');
+                handleApiCall(
+                    linkBtn,
+                    '" . $GLOBALS['webroot'] . "/interface/forms/ai_summary/link_evidence.php',
+                    '" . xlt("Linking Evidence") . "'
+                );
+            });
+        } else {
+            console.log('AI_SUMMARY: Link button not found (this is normal if no summary exists)');
         }
+        
+        console.log('AI_SUMMARY: Initialization complete');
     });
     </script>";
 
-    // --- CSS for Highlighting ---
+    // CSS for highlighting and styling
     echo "<style>
-    .summary-block { cursor: pointer; margin-bottom: 0.8rem; padding: 6px; border-radius: 4px; transition: background-color 0.2s; }
-    .summary-block:hover { background-color: #e9ecef; }
-    .summary-block.highlight { background-color: #cfe2ff; font-weight: bold; }
-    .transcript-turn { padding: 2px 4px; margin-bottom: 0.8rem; transition: background-color 0.2s; }
-    .transcript-turn.highlight { background-color: #fff3cd; border-radius: 4px; }
-    .ai-scribe-card .btn-lg { font-weight: 600; }
+    .summary-block { 
+        cursor: pointer; 
+        margin-bottom: 0.8rem; 
+        padding: 6px; 
+        border-radius: 4px; 
+        transition: background-color 0.2s; 
+    }
+    .summary-block:hover { 
+        background-color: #e9ecef; 
+    }
+    .summary-block.highlight { 
+        background-color: #cfe2ff; 
+        font-weight: bold; 
+        border: 2px solid #0d6efd;
+    }
+    .summary-header {
+        font-weight: bold;
+        color: #0d6efd;
+        border-left: 4px solid #0d6efd;
+        padding-left: 8px;
+        background-color: #f8f9fa;
+    }
+    .transcript-turn { 
+        padding: 4px 6px; 
+        margin-bottom: 0.8rem; 
+        transition: background-color 0.2s; 
+        border-radius: 4px;
+    }
+    .transcript-turn.highlight { 
+        background-color: #fff3cd; 
+        border: 2px solid #ffc107;
+        font-weight: bold;
+    }
+    .ai-scribe-card .btn-lg { 
+        font-weight: 600; 
+    }
+    .summary-container {
+        max-height: 400px;
+        overflow-y: auto;
+    }
     </style>";
     
     // Log that the function completed successfully
     error_log("AI_SUMMARY_REPORT: Function completed successfully for form ID {$id}", 3, "/tmp/ai_summary.log");
-    
-    // Add a simple HTML comment to verify the function ran to completion
-    echo "<!-- AI_SUMMARY_REPORT: Function completed for form ID {$id} -->";
 }
 
 // Log that the function was defined
