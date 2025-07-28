@@ -83,23 +83,26 @@ function ai_summary_report($pid, $encounter, $cols, $id): void
     }
 
     echo "<div class='ai-summary-report border rounded p-3 mb-3'>";
-
     // AI Scribe Card with conditional buttons
     echo "<div class='card mb-3 ai-scribe-card'>";
-    echo "  <div class='card-header bg-primary text-white'><h5 class='mb-0'><i class='fas fa-robot'></i> " . xlt("AI Scribe") . "</h5></div>";
-    echo "  <div class='card-body d-flex align-items-center'>";
+    echo "  <div class='card-header bg-primary text-white'><h5 class='mb-0'>" . xlt("AI Scribe") . "</h5></div>";
+    echo "  <div class='card-body'>";
+    echo "    <div class='d-flex align-items-start'>";
+    echo "      <div class='d-flex align-items-center me-3'>";
     
     // Button for generating summary - always visible so users can regenerate
-    echo "    <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "'>";
-    echo "      <i class='fas fa-magic'></i> " . xlt($hasSummary ? "Regenerate Summary" : "Generate Summary");
-    echo "    </button>";
+    echo "        <button id='btn_generate_summary_" . attr($id) . "' class='btn btn-success btn-lg me-2' data-form-id='" . attr($id) . "'>";
+    echo "          <i class='fas fa-magic'></i> " . xlt($hasSummary ? "Regenerate Summary" : "Generate Summary");
+    echo "        </button>";
     
     // Button for linking evidence - show if there's a summary
-    echo "    <button id='btn_link_evidence_" . attr($id) . "' class='btn btn-info btn-lg' data-form-id='" . attr($id) . "' " . ($hasSummary ? "" : "style='display:none;'") . ">";
-    echo "      <i class='fas fa-link'></i> " . xlt($hasLinkingMap ? "Relink Evidence" : "Link Evidence");
-    echo "    </button>";
+    echo "        <button id='btn_link_evidence_" . attr($id) . "' class='btn btn-info btn-lg' data-form-id='" . attr($id) . "' " . ($hasSummary ? "" : "style='display:none;'") . ">";
+    echo "          <i class='fas fa-link'></i> " . xlt($hasLinkingMap ? "Relink Evidence" : "Link Evidence");
+    echo "        </button>";
     
-    echo "    <div id='summary_status_" . attr($id) . "' class='ms-3 flex-grow-1'></div>";
+    echo "      </div>";
+    echo "      <div id='summary_status_" . attr($id) . "' class='flex-grow-1'></div>";
+    echo "    </div>";
     echo "  </div>";
     echo "</div>";
 
