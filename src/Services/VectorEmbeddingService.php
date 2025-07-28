@@ -206,7 +206,7 @@ class VectorEmbeddingService
      * @param int $maxMatches Maximum number of matches to return (default 5)
      * @return array Array of matches with indices and similarity scores
      */
-    public function findBestMatches(array $summaryEmbedding, array $transcriptEmbeddings, float $threshold = 0.65, int $maxMatches = 5): array
+    public function findBestMatches(array $summaryEmbedding, array $transcriptEmbeddings, float $threshold = 0.3, int $maxMatches = 5): array
     {
         $matches = [];
         
