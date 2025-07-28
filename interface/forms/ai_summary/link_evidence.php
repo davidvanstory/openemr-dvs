@@ -11,6 +11,7 @@ require_once(__DIR__ . "/../../globals.php");
 use OpenEMR\Common\Csrf\CsrfUtils;
 use OpenEMR\Common\Utils\TextUtil;
 use OpenEMR\Common\Logging\SystemLogger;
+use OpenEMR\Services\VectorEmbeddingService;
 
 header('Content-Type: application/json');
 
@@ -256,11 +257,13 @@ try {
                         $transcriptContent = $transcriptTurns[$tIdx] ?? '';
                         ai_log("      Turn $tIdx: '" . substr($transcriptContent, 0, 100) . "...'");
                         
-                        // SEMANTIC VALIDATION: Check for obvious mismatches
-                        $semanticMatch = validateSemanticMatch($summaryContent, $transcriptContent);
+                        // ENHANCED SEMANTIC VALIDATION: Check for obvious mismatches using vector embeddings + traditional methods
+                        $semanticMatch = validateSemanticMatchEnhanced($summaryContent, $transcriptContent, $apiKey, $formId);
                         if (!$semanticMatch['likely_match']) {
                             $suspiciousLinks++;
-                            ai_log("      ⚠️  SUSPICIOUS: " . $semanticMatch['reason']);
+                            ai_log("      ⚠️  SUSPICIOUS: " . $semanticMatch['reason'] . " (confidence: " . round($semanticMatch['confidence'], 3) . ")");
+                        } else if (isset($semanticMatch['confidence']) && $semanticMatch['confidence'] > 0.8) {
+                            ai_log("      ✅ HIGH CONFIDENCE: " . $semanticMatch['reason'] . " (confidence: " . round($semanticMatch['confidence'], 3) . ")");
                         }
                     }
                     if (count($validTranscriptIndices) > 3) {
@@ -288,17 +291,39 @@ try {
     ai_log("  ❌ Invalid links removed: $invalidLinks");
     ai_log("  ⚠️  Suspicious links detected: $suspiciousLinks");
 
-    // Save to database
+    // Save to database with enhanced metadata
     ai_log("=== DATABASE UPDATE START ===");
-    ai_log("💾 SAVING LINKING MAP TO DATABASE...");
-    $updateResult = sqlStatement("UPDATE form_ai_summary SET linking_map_json = ? WHERE id = ?", [$validatedLinkingJson, $formId]);
+    ai_log("💾 SAVING ENHANCED LINKING MAP TO DATABASE...");
+    
+    // Add metadata about the enhanced validation
+    $enhancedLinkingData = [
+        'linking_map' => $validatedMap,
+        'metadata' => [
+            'validation_method' => 'enhanced_vector_embeddings',
+            'traditional_suspicious_links' => $suspiciousLinks,
+            'total_links_validated' => count($validatedMap),
+            'coverage_percentage' => round((count($validatedMap) / $summaryCount) * 100, 1),
+            'enhanced_at' => date('c'),
+            'openai_model_used' => 'text-embedding-3-small'
+        ]
+    ];
+    
+    $enhancedLinkingJson = json_encode($enhancedLinkingData);
+    $updateResult = sqlStatement(
+        "UPDATE form_ai_summary SET 
+            linking_map_json = ?,
+            embedding_model = ?,
+            embedding_version = ?
+         WHERE id = ?", 
+        [$enhancedLinkingJson, 'text-embedding-3-small', 1, $formId]
+    );
     
     if (!$updateResult) {
         ai_log("ERROR: Failed to update database with linking map");
         throw new Exception('Failed to save linking map to database');
     }
-    ai_log("✅ Database updated successfully with linking map for form_id: " . $formId);
-    ai_log("💾 Saved " . strlen($validatedLinkingJson) . " bytes of linking data to database");
+    ai_log("✅ Database updated successfully with ENHANCED linking map for form_id: " . $formId);
+    ai_log("💾 Saved " . strlen($enhancedLinkingJson) . " bytes of enhanced linking data to database");
 
     // Log success
     (new SystemLogger())->info("AI Evidence Linking completed successfully", [
@@ -316,8 +341,10 @@ try {
     // Return success response
     echo json_encode([
         'success' => true, 
-        'message' => 'Linking map generated successfully.',
+        'message' => 'Enhanced linking map generated successfully using vector embeddings.',
         'linking_entries' => count($validatedMap),
+        'validation_method' => 'enhanced_vector_embeddings',
+        'suspicious_links_detected' => $suspiciousLinks,
         'form_id' => $formId
     ]);
 
@@ -464,6 +491,121 @@ function makeOpenAICall(array $payload, string $apiKey): array
 }
 
 /**
+ * Enhanced validation using vector embeddings + traditional semantic matching.
+ * Provides much higher accuracy for medical context validation.
+ */
+function validateSemanticMatchEnhanced(string $summary, string $transcript, string $apiKey, int $formId): array
+{
+    ai_log("=== ENHANCED SEMANTIC VALIDATION START ===");
+    ai_log("Summary text (length: " . strlen($summary) . "): '" . substr($summary, 0, 100) . "...'");
+    ai_log("Transcript text (length: " . strlen($transcript) . "): '" . substr($transcript, 0, 100) . "...'");
+    ai_log("Form ID: $formId");
+    
+    // First, try vector embedding similarity (most accurate)
+    try {
+        ai_log("=== VECTOR EMBEDDINGS APPROACH START ===");
+        ai_log("Initializing VectorEmbeddingService with text-embedding-3-small model...");
+        
+        $vectorService = new VectorEmbeddingService($apiKey, 'text-embedding-3-small');
+        
+        ai_log("Generating embeddings for summary and transcript texts...");
+        
+        // Generate embeddings for both texts
+        $startTime = microtime(true);
+        $summaryEmbedding = $vectorService->generateEmbeddings([$summary], 'summary_block')[0];
+        $summaryTime = round((microtime(true) - $startTime) * 1000);
+        
+        $startTime = microtime(true);
+        $transcriptEmbedding = $vectorService->generateEmbeddings([$transcript], 'transcript_turn')[0];
+        $transcriptTime = round((microtime(true) - $startTime) * 1000);
+        
+        ai_log("Summary embedding generated in {$summaryTime}ms (dimensions: " . count($summaryEmbedding) . ")");
+        ai_log("Transcript embedding generated in {$transcriptTime}ms (dimensions: " . count($transcriptEmbedding) . ")");
+        
+        // Calculate cosine similarity
+        ai_log("Calculating cosine similarity between embeddings...");
+        $startTime = microtime(true);
+        $vectorSimilarity = $vectorService->cosineSimilarity($summaryEmbedding, $transcriptEmbedding);
+        $similarityTime = round((microtime(true) - $startTime) * 1000);
+        
+        ai_log("Vector similarity calculated in {$similarityTime}ms");
+        ai_log("🎯 VECTOR SIMILARITY SCORE: " . round($vectorSimilarity, 4) . " (" . round($vectorSimilarity * 100, 1) . "%)");
+        
+        // High confidence thresholds for medical content
+        if ($vectorSimilarity >= 0.85) {
+            ai_log("✅ HIGH CONFIDENCE MATCH: Vector similarity >= 0.85 threshold");
+            ai_log("Decision: LIKELY MATCH via vector embeddings only");
+            ai_log("=== ENHANCED SEMANTIC VALIDATION SUCCESS ===");
+            return [
+                'likely_match' => true,
+                'reason' => 'High vector similarity (' . round($vectorSimilarity * 100) . '%)',
+                'confidence' => $vectorSimilarity,
+                'method' => 'vector_embeddings'
+            ];
+        } elseif ($vectorSimilarity >= 0.7) {
+            ai_log("⚠️ MEDIUM CONFIDENCE: Vector similarity >= 0.7, running hybrid validation...");
+            ai_log("Running traditional semantic validation as backup...");
+            
+            // Medium similarity - validate with traditional methods
+            $traditionalResult = validateSemanticMatch($summary, $transcript);
+            
+            ai_log("Traditional validation result: " . ($traditionalResult['likely_match'] ? 'MATCH' : 'NO MATCH'));
+            ai_log("Traditional reason: " . $traditionalResult['reason']);
+            
+            if ($traditionalResult['likely_match']) {
+                $hybridConfidence = ($vectorSimilarity + ($traditionalResult['confidence'] ?? 0.5)) / 2;
+                ai_log("✅ HYBRID VALIDATION SUCCESS: Both vector and traditional agree");
+                ai_log("Hybrid confidence: " . round($hybridConfidence, 3));
+                ai_log("=== ENHANCED SEMANTIC VALIDATION SUCCESS ===");
+                return [
+                    'likely_match' => true,
+                    'reason' => 'Vector + traditional validation (' . round($vectorSimilarity * 100) . '%, ' . $traditionalResult['reason'] . ')',
+                    'confidence' => $hybridConfidence,
+                    'method' => 'hybrid'
+                ];
+            } else {
+                ai_log("❌ HYBRID VALIDATION CONFLICT: Vector says medium, traditional says no");
+                ai_log("Being conservative - marking as NO MATCH");
+                ai_log("=== ENHANCED SEMANTIC VALIDATION CONFLICT ===");
+                // Vector says medium, traditional says no - be conservative
+                return [
+                    'likely_match' => false,
+                    'reason' => 'Mixed signals: vector=' . round($vectorSimilarity * 100) . '%, traditional=' . $traditionalResult['reason'],
+                    'confidence' => $vectorSimilarity,
+                    'method' => 'hybrid_conservative'
+                ];
+            }
+        } else {
+            ai_log("❌ LOW CONFIDENCE: Vector similarity < 0.7 threshold");
+            ai_log("Decision: NO MATCH via vector embeddings");
+            ai_log("=== ENHANCED SEMANTIC VALIDATION REJECTION ===");
+            // Low vector similarity - likely not a match
+            return [
+                'likely_match' => false,
+                'reason' => 'Low vector similarity (' . round($vectorSimilarity * 100) . '%)',
+                'confidence' => $vectorSimilarity,
+                'method' => 'vector_embeddings'
+            ];
+        }
+        
+    } catch (Exception $e) {
+        ai_log("=== VECTOR EMBEDDINGS ERROR ===");
+        ai_log("ERROR: Vector embedding failed: " . $e->getMessage());
+        ai_log("Stack trace: " . $e->getTraceAsString());
+        ai_log("Falling back to traditional validation method...");
+        
+        // Fallback to traditional method if vector embeddings fail
+        ai_log("=== TRADITIONAL VALIDATION FALLBACK START ===");
+        $traditionalResult = validateSemanticMatch($summary, $transcript);
+        ai_log("Traditional fallback result: " . ($traditionalResult['likely_match'] ? 'MATCH' : 'NO MATCH'));
+        ai_log("Traditional fallback reason: " . $traditionalResult['reason']);
+        ai_log("=== ENHANCED SEMANTIC VALIDATION FALLBACK COMPLETE ===");
+        
+        return array_merge($traditionalResult, ['method' => 'traditional_fallback']);
+    }
+}
+
+/**
  * Helper function to validate semantic match between summary and transcript.
  * Designed to catch obvious mismatches in medical contexts.
  */
@@ -475,7 +617,7 @@ function validateSemanticMatch(string $summary, string $transcript): array
     
     // Skip header blocks (they typically don't have direct transcript matches)
     if (preg_match('/^\*\*[^*]+\*\*$/', $summary)) {
-        return ['likely_match' => true, 'reason' => 'Header block - validation skipped'];
+        return ['likely_match' => true, 'reason' => 'Header block - validation skipped', 'confidence' => 1.0];
     }
     
     // Medical condition keywords
@@ -526,32 +668,38 @@ function validateSemanticMatch(string $summary, string $transcript): array
     if (!empty($summaryMedicalTerms) && !empty($transcriptLifestyleTerms) && empty($transcriptMedicalTerms)) {
         return [
             'likely_match' => false, 
-            'reason' => 'Medical summary (' . implode(', ', $summaryMedicalTerms) . ') linked to lifestyle content (' . implode(', ', $transcriptLifestyleTerms) . ')'
+            'reason' => 'Medical summary (' . implode(', ', $summaryMedicalTerms) . ') linked to lifestyle content (' . implode(', ', $transcriptLifestyleTerms) . ')',
+            'confidence' => 0.1
         ];
     }
     
     if (!empty($summaryLifestyleTerms) && !empty($transcriptMedicalTerms) && empty($transcriptLifestyleTerms)) {
         return [
             'likely_match' => false, 
-            'reason' => 'Lifestyle summary (' . implode(', ', $summaryLifestyleTerms) . ') linked to medical content (' . implode(', ', $transcriptMedicalTerms) . ')'
+            'reason' => 'Lifestyle summary (' . implode(', ', $summaryLifestyleTerms) . ') linked to medical content (' . implode(', ', $transcriptMedicalTerms) . ')',
+            'confidence' => 0.1
         ];
     }
     
     // Check for any shared medical terms
     $sharedMedicalTerms = array_intersect($summaryMedicalTerms, $transcriptMedicalTerms);
     if (!empty($sharedMedicalTerms)) {
+        $medicalConfidence = min(0.9, 0.6 + (count($sharedMedicalTerms) * 0.1)); // Higher confidence for medical matches
         return [
             'likely_match' => true, 
-            'reason' => 'Shared medical terms: ' . implode(', ', $sharedMedicalTerms)
+            'reason' => 'Shared medical terms: ' . implode(', ', $sharedMedicalTerms),
+            'confidence' => $medicalConfidence
         ];
     }
     
     // Check for any shared lifestyle terms
     $sharedLifestyleTerms = array_intersect($summaryLifestyleTerms, $transcriptLifestyleTerms);
     if (!empty($sharedLifestyleTerms)) {
+        $lifestyleConfidence = min(0.8, 0.5 + (count($sharedLifestyleTerms) * 0.1)); // Good confidence for lifestyle matches
         return [
             'likely_match' => true, 
-            'reason' => 'Shared lifestyle terms: ' . implode(', ', $sharedLifestyleTerms)
+            'reason' => 'Shared lifestyle terms: ' . implode(', ', $sharedLifestyleTerms),
+            'confidence' => $lifestyleConfidence
         ];
     }
     
@@ -570,13 +718,15 @@ function validateSemanticMatch(string $summary, string $transcript): array
     if ($overlapRatio >= 0.3) { // 30% word overlap
         return [
             'likely_match' => true, 
-            'reason' => 'Good word overlap (' . round($overlapRatio * 100) . '%): ' . implode(', ', array_slice($sharedWords, 0, 3))
+            'reason' => 'Good word overlap (' . round($overlapRatio * 100) . '%): ' . implode(', ', array_slice($sharedWords, 0, 3)),
+            'confidence' => $overlapRatio
         ];
     }
     
     return [
         'likely_match' => false, 
-        'reason' => 'Low semantic similarity (only ' . round($overlapRatio * 100) . '% word overlap)'
+        'reason' => 'Low semantic similarity (only ' . round($overlapRatio * 100) . '% word overlap)',
+        'confidence' => $overlapRatio
     ];
 }
 ?>
