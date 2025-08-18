@@ -15,7 +15,7 @@ jobs:
   collect:
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Collect Docker Dirs
       id: docker-dirs
       ##
@@ -90,7 +90,7 @@ jobs:
       OPENEMR_DIR: ${{ matrix.configurations.openemr_dir }}
       COMPOSE_FILE: "ci/${{ matrix.configurations.selenium_template }}:ci/${{ matrix.configurations.webserver_template }}:ci/${{ matrix.configurations.database_template }}:ci/${{ matrix.configurations.docker_dir }}/docker-compose.yml"
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install PHP
       uses: shivammathur/setup-php@v2
       with:
