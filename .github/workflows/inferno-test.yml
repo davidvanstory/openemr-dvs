@@ -47,7 +47,7 @@ jobs:
                   extensions: mbstring, xml, ctype, json, tokenizer, openssl, pdo, pdo_mysql
 
             - name: Install npm package
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: '22'
 
